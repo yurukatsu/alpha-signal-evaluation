@@ -27,7 +27,7 @@ MINIMAL = {
             "columns": {"date": "dt", "asset_id": "code"},
             "series": {
                 "total": {"column": "ret", "kind": "total"},
-                "specific": {"column": "sret", "kind": "residual"},
+                "specific": {"column": "sret", "kind": "specific"},
             },
         }
     ],
@@ -42,7 +42,7 @@ def _with(**overrides):
 def test_minimal_config():
     cfg = EvaluationConfig.model_validate(MINIMAL)
     assert cfg.data.signal_names == ["value"]
-    assert cfg.return_kinds == {"total": "total", "specific": "residual"}
+    assert cfg.return_kinds == {"total": "total", "specific": "specific"}
     assert cfg.horizons == [1]
     assert cfg.returns[0].convention == "realized"
 
@@ -73,6 +73,16 @@ def test_signals_accept_list():
         _with(data={"signals": [MINIMAL["data"]["signals"], second]})
     )
     assert cfg.data.signal_names == ["value", "momentum"]
+
+
+def test_signal_values_can_rename_columns():
+    s = {**MINIMAL["data"]["signals"], "values": {"ai_v1234": "score"}}
+    t = {**MINIMAL["data"]["signals"], "values": {"dss": "score"}}
+    cfg = EvaluationConfig.model_validate(_with(data={"signals": [s, t]}))
+    assert cfg.data.signal_names == ["ai_v1234", "dss"]
+    assert cfg.data.signals[0].value_map == {"ai_v1234": "score"}
+    with pytest.raises(ValidationError, match="must not be empty"):
+        EvaluationConfig.model_validate(_with(data={"signals": {**s, "values": {}}}))
 
 
 def test_duplicate_signal_names_are_rejected():
@@ -131,6 +141,14 @@ def test_specific_return_must_exist():
     assert cfg.risk_models["barra"].specific_return == "specific"
 
 
+def test_classification_one_hot():
+    cls = {"source": "file", "path": "labels/{Label2}.csv", "one_hot": True}
+    cfg = EvaluationConfig.model_validate(
+        _with(data={"signals": MINIMAL["data"]["signals"], "classification": cls})
+    )
+    assert cfg.data.classification.one_hot
+
+
 def test_portfolios_are_reserved():
     with pytest.raises(ValidationError, match="reserved"):
         EvaluationConfig.model_validate(_with(portfolios=[{"id": "x"}]))
@@ -155,8 +173,19 @@ def test_absolute_paths_are_kept(tmp_path: Path):
 
 
 def test_return_aggregation_merges_defaults():
-    agg = ReturnAggregation.model_validate({"cumulative": {"residual": "compound"}})
-    assert agg.cumulative == {"total": "compound", "residual": "compound"}
-    assert ReturnAggregation().cumulative == {"total": "compound", "residual": "sum"}
+    agg = ReturnAggregation.model_validate({"cumulative": {"specific": "compound"}})
+    assert agg.cumulative == {"total": "compound", "specific": "compound"}
+    assert ReturnAggregation().cumulative == {"total": "compound", "specific": "sum"}
     with pytest.raises(ValidationError):
-        ReturnAggregation.model_validate({"cumulative": {"residual": "log"}})
+        ReturnAggregation.model_validate({"cumulative": {"specific": "log"}})
+
+
+def test_full_reference_config_is_valid():
+    """examples/config.full.yaml（全項目の例）がスキーマと metric のパラメータに合っていること。"""
+    from alpha_signal_evaluation.validation import spec_from_config, validate_metrics
+
+    path = Path(__file__).parents[1] / "examples" / "config.full.yaml"
+    cfg = load_config(path)
+    # enabled: false の metric も含めてパラメータを検証する
+    assert validate_metrics(cfg.metrics, spec_from_config(cfg)) == []
+    assert len(cfg.metrics) == 7 and len(cfg.enabled_metrics) == 6

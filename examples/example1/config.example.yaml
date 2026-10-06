@@ -1,0 +1,82 @@
+# サンプル設定。examples/example1/make_sample_data.py で作ったデータ（社内の input.zip と同じ形式）を評価する。
+# 相対パスはこのファイルの場所を基準に解決される。
+version: 1
+
+calendar:
+  path: ./input/calendar.dat   # タブ・スペース・全角スペースが混在していても読める
+  index: Base_day              # 内部で全データに付与する日付キー
+
+period:
+  start: "20190329"            # calendar.index（Base_day）の値で絞る
+  end: "20260731"              # 末尾はホライズン分のリターンがないため欠損になる（警告が出る）
+
+horizons: [1, 3, 6]            # 単位 = カレンダーの行数（月）
+
+data:
+  signals:
+    # シグナルのファイルは Trading_day の前営業日（Label2）で作られている。
+    # どの列でファイルを選んでも、データには Base_day が付与される
+    - source: file
+      path: ./input/alpha/ai/{Label2}.csv   # ヘッダー "#nri_code,score"（先頭の # は自動で除去）
+      columns: {asset_id: nri_code}
+      values: {ai: score}                   # {シグナル名: 列名}
+    - source: file
+      path: ./input/alpha/dss/{Label2}.csv  # ヘッダーなし
+      read_options: {header: null, names: [nri_code, score]}
+      columns: {asset_id: nri_code}
+      values: {dss: score}
+  classification:
+    source: file
+    path: ./input/labels/{Label2}.csv      # L001〜L010 の one-hot
+    columns: {asset_id: nri_code}
+    one_hot: true                           # 1 が立っている列名（L001 等）をカテゴリにする
+
+universe:
+  source: file
+  path: ./input/univ/{Trading_day}.dat     # "# ..." のコメント行 + コード・ウェイトのタブ区切り
+  read_options: {sep: "\t", comment: "#", header: null, names: [nri_code, weight]}
+  columns: {asset_id: nri_code, weight: weight}   # weight はベンチマークウェイトとしても保持
+
+returns:
+  # サンプル用: Base_day ごとの月次リターン（realized = 行 t-1 → t の実現リターン）
+  - source: file
+    path: ./input/returns/{Base_day}.csv
+    convention: realized
+    columns: {asset_id: nri_code}
+    series:
+      total:    {column: ret,  kind: total}
+      specific: {column: sret, kind: specific}
+  # 本番: DB から日次で取得して Trading_day の区間に集約する（接続先は io/db/configs で定義）
+  # - source: db
+  #   connection: risk_models
+  #   query: ./sql/barra_returns_daily.sql   # WHERE dt > :start AND dt <= :end
+  #   match_on: Trading_day
+  #   columns: {date: dt, asset_id: code}
+  #   series:
+  #     total:    {column: ret,  kind: total}
+  #     specific: {column: sret, kind: specific}
+
+metrics:
+  - name: ic
+    params: {method: spearman}
+  - name: quantile
+    params: {n_quantiles: 5}
+  - name: quantile
+    id: quantile_q10_specific  # 同じ metric を複数回使う場合は id 必須
+    params: {n_quantiles: 10, signals: [ai], returns: [specific], horizons: [1]}
+  - name: category
+    params: {returns: [specific], horizons: [1]}
+  - name: alpha_decay
+  - name: autocorr
+    params: {lags: [1, 3, 6, 12]}
+  - name: factor_correlation
+
+execution:
+  n_jobs: 4
+
+output:
+  dir: ./output
+  formats: [csv]               # csv / parquet / xlsx（複数指定可）
+
+cache:
+  dir: ./.cache

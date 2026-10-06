@@ -13,7 +13,9 @@ uv sync --extra postgres      # PostgreSQL
 uv sync --extra mysql         # MySQL
 ```
 
-DB の認証情報は環境変数から読む（`.env.example` を `.env` にコピーして記入。CLI は実行ディレクトリの `.env` を読み込む）。
+DB 接続（`io/db`）は社内の namdb v0.1.2 を取り込んだもの。接続先のホスト名・認証情報は環境変数から読む
+（`.env.example` を `.env` にコピーして記入。CLI は実行ディレクトリの `.env` を読み込む）。
+config.yaml の DB ソースでは `connection: risk_models` のように接続先 DB 名（小文字）で指定する。
 
 ## 使い方
 
@@ -21,11 +23,18 @@ DB の認証情報は環境変数から読む（`.env.example` を `.env` にコ
 
 ```sh
 uv run alpha-eval validate config.yaml   # 計算せずに設定・ファイルの存在を検証
-uv run alpha-eval run config.yaml        # 評価して output.dir に書き出す
+uv run alpha-eval run config.yaml        # 評価して output.dir に書き出す（output.formats: csv / parquet / xlsx。既定は csv）
 uv run alpha-eval metrics list -v        # 登録済み metric とパラメータ
 ```
 
-サンプル: `uv run python examples/make_sample_data.py && uv run alpha-eval run examples/config.example.yaml`
+サンプル（いずれも合成データを生成して評価する）:
+
+- [examples/example1](examples/example1): 日次の日付キー（`{Label2}` 等）・one-hot の業種分類
+- [examples/example2](examples/example2): 月次（`YYYYMM`）・BARRA 形式の ID・ベンチマーク別ファイル
+
+```sh
+uv run python examples/example1/make_sample_data.py && uv run alpha-eval run examples/example1/config.example.yaml
+```
 
 ### Python API
 
@@ -42,7 +51,7 @@ report.save()                         # config の output 設定で書き出し
 bundle = make_bundle(
     signals,                                  # index=(date, asset_id), columns=シグナル
     {"total": total_ret, "specific": spec_ret},  # 期間リターン（index=date, columns=asset_id）
-    return_kinds={"total": "total", "specific": "residual"},
+    return_kinds={"total": "total", "specific": "specific"},
     horizons=[1, 3],
 )
 report = evaluate({"version": 1, "metrics": [{"name": "ic"}]}, data=bundle)
@@ -54,14 +63,24 @@ InformationCoefficient(method="pearson").compute(bundle)
 
 ## config.yaml
 
-全体像は [examples/config.example.yaml](examples/config.example.yaml) を参照。要点:
+書ける項目をすべて載せた例（コメント付き）は [examples/config.full.yaml](examples/config.full.yaml)、
+動く例は [examples/example1/config.example.yaml](examples/example1/config.example.yaml) を参照。要点:
 
-- **カレンダー**（タブ区切り、1行 = 1評価期間）が時間軸の唯一の定義。`horizons` の単位はカレンダーの行数。
-- ファイルパスはカレンダーの列名をプレースホルダに持つテンプレート（`{Base_day}`, `{Rskmdl_month}` 等）。
+- **カレンダー**（例: `calendar.dat`、1行 = 1評価期間）が時間軸の唯一の定義。`horizons` の単位はカレンダーの行数。
+  ヘッダー先頭の `#` は除去し、タブ・スペース・全角スペースが混在していても読める。
+  月（`YYYYMM`）だけの1列でもよい（ヘッダー行がなければ `calendar.columns: [Month]` のように列名を指定）。
+- ファイルパスはカレンダーの列名をプレースホルダに持つテンプレート（`{Base_day}`, `{Label2}`, `{Trading_day}` 等）。
   どの列でファイルを選んでも、データには `calendar.index` の値が付与される。
-- リターンは名前付き系列の集合。各系列の `kind`（`total` / `residual`）から集約方法が決まる
-  （期間内: total は複利・residual は加算）。
-- DB ソースは日次で1クエリにまとめて取得し、カレンダー期間に集約する。SQL は `WHERE dt > :start AND dt <= :end`
+- CSV ヘッダー先頭の `#`（`#nri_code`）は除去され、銘柄コードは文字列のまま読む（先頭ゼロを保つ）。
+  ヘッダーなし・コメント行付きのファイルは `read_options`（`header: null`, `names`, `comment: "#"` 等）で読む。
+- シグナルの `values` はリスト、または `{シグナル名: 列名}`（ソース間で列名が同じ場合）。
+- 業種分類が one-hot（`L001`〜`L010` 等）の場合は `one_hot: true`。
+- ベンチマークウェイトは `benchmark`（`columns` に `asset_id` と `weight`）で指定する。
+  省略時はユニバースの `columns` に `weight` があればそれを使う。
+- リターンは名前付き系列の集合。各系列の `kind`（`total` / `specific`）から集約方法が決まる
+  （期間内: total は複利・specific は加算）。
+- DB ソースは日次で1クエリにまとめて取得し、カレンダー期間に集約する。`match_on` が日付（8桁）なら
+  前行の日付の翌日〜当該行の日付、月（6桁）ならその月の1日〜月末日を1期間とする。SQL は `WHERE dt > :start AND dt <= :end`
   のように `:start` / `:end` を参照する（値はパイプラインが自動で渡す。リテラルのコロンは `\:`）。
 - 相対パスは config ファイルの場所を基準に解決される。
 
@@ -84,7 +103,7 @@ my_metric = "my_package.my_metric"
 
 | 名前 | 内容 | requires |
 |---|---|---|
-| `ic` | IC / ICIR（spearman / pearson）、Newey-West t 値 | signals, forward_returns |
+| `ic` | IC（spearman / pearson）、Newey-West t 値 | signals, forward_returns |
 | `quantile` | 分位ポートフォリオのリターン・スプレッド・累積リターン | signals, forward_returns |
 | `category` | カテゴリ内 IC とカテゴリ別平均シグナル | signals, forward_returns, classification |
 | `alpha_decay` | ホライズン別の IC / スプレッド | signals, forward_returns |

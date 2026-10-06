@@ -65,7 +65,7 @@ class TestQuantile:
             & (returns["quantile"] == 1)
         ]
         spec = cum[(cum["returns"] == "specific") & (cum["portfolio"] == "Q1")]
-        # residual は加算で累積
+        # specific は加算で累積
         assert spec["cumulative_return"].iloc[-1] == pytest.approx(q1["mean_return"].sum())
         q1_total = returns[
             (returns["returns"] == "total") & (returns["horizon"] == 1) & (returns["quantile"] == 1)
@@ -80,7 +80,7 @@ class TestQuantile:
         params = {
             "signals": ["alpha"],
             "returns": ["specific"],
-            "aggregation": {"cumulative": {"residual": "compound"}},
+            "aggregation": {"cumulative": {"specific": "compound"}},
         }
         result = get_metric("quantile")(params).compute(bundle)
         returns = result.tables["returns"]
@@ -104,7 +104,7 @@ def test_alpha_decay_covers_all_horizons(bundle):
     decay = result.tables["decay"]
     assert sorted(decay["horizon"].unique()) == bundle.horizons
     spec = decay[decay["returns"] == "specific"].set_index("horizon")
-    # residual は算術で1期間あたりに換算
+    # specific は算術で1期間あたりに換算
     assert spec.loc[3, "spread_per_period"] < spec.loc[1, "spread_per_period"]
 
 

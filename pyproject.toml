@@ -52,6 +52,11 @@ example = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 実 DB に接続するテストは `uv run pytest -m integration` で明示的に実行する
+addopts = "-m 'not integration'"
+markers = [
+    "integration: tests that connect to external databases",
+]
 
 [tool.ruff]
 line-length = 100

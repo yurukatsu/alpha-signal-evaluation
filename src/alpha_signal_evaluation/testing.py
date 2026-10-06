@@ -1,7 +1,15 @@
 """テスト用の合成データ。外部パッケージで metric を作る場合のテストにも使える。
 
-from alpha_signal_evaluation.testing import make_synthetic_bundle
-result = MyMetric().compute(make_synthetic_bundle())
+ファイルや DB を用意せずに、時点合わせ済みの ``DataBundle``（シグナル・total / specific の
+フォワードリターン・業種分類・リスクモデル）を乱数から作る。シグナルの一部は将来の
+リターンを予測するように作ってあるため、IC や分位スプレッドが正になることを確かめる
+テストにも使える。DataBundle は ``pipeline.preprocess.make_bundle()`` で組み立てるので、
+時点合わせは本番と同じ規約（realized）で行われる。
+
+使い方::
+
+    from alpha_signal_evaluation.testing import make_synthetic_bundle
+    result = MyMetric().compute(make_synthetic_bundle())
 """
 
 from dataclasses import replace
@@ -25,8 +33,42 @@ def make_synthetic_bundle(
 
     - シグナル ``alpha`` は次の行（realized 規約で行 t+1）のスペシフィックリターンを予測する
     - ``noise`` は無関係、``mixed`` は両者の平均
-    - リターン系列 ``total``（kind=total）と ``specific``（kind=residual）
+    - リターン系列 ``total``（kind=total）と ``specific``（kind=specific）
     - 業種分類（5業種）と、リスクモデル ``barra``（スタイル2つ・業種2つ）
+
+    データの構成:
+
+    - 日付キーは 2015-01-31 から始まる月末日（``yyyymmdd`` の文字列）。評価対象は先頭の
+      ``n_dates`` 行で、フォワードリターンの計算用に最大ホライズン分の行を後ろに足して作る
+    - 銘柄は ``A0000``, ``A0001``, ... の ``n_assets`` 銘柄
+    - ``specific`` の行 t（t >= 1）は ``0.01 * alpha[t-1] + 0.03 * 標準正規乱数``。
+      最初の行は欠損
+    - ``total`` は ``specific`` にファクターリターン由来の部分（行 t-1 のエクスポージャー ×
+      行 t のファクターリターン）を足したもの
+    - シグナルは ``missing_rate`` の割合でランダムに欠損させる（リターンは欠損させない）
+    - 分類は ``category`` 列に ``S0``〜``S4``（銘柄ごとに固定）
+    - リスクモデル ``barra`` はエクスポージャー（``size`` / ``momentum`` / ``ind_a`` /
+      ``ind_b``）とフォワードファクターリターン（加算）を持つ。``momentum`` は ``alpha`` と
+      正に相関する。``factor_covariance`` / ``specific_risk`` は持たない。
+      ``specific_return="specific"``、``factor_groups`` は ``style`` / ``industry``
+    - ベンチマークウェイト・ユニバースは持たない
+
+    Args:
+        n_dates: 評価対象のカレンダー行数。
+        n_assets: 銘柄数。
+        horizons: フォワードリターンのホライズン（カレンダーの行数）。
+        seed: 乱数シード。同じ引数なら同じデータになる。
+        missing_rate: シグナルを欠損させる割合（0 なら欠損させない）。
+
+    Returns:
+        ``DataBundle``。``signals`` は index=(date, asset_id)、columns=[alpha, noise, mixed]。
+        ``forward_returns`` は系列名 -> ホライズン -> DataFrame（index=date、
+        columns=asset_id、行は評価対象の ``n_dates`` 行）。``risk_models`` は ``{"barra": ...}``。
+
+    Examples:
+        >>> bundle = make_synthetic_bundle(n_dates=12, n_assets=20, horizons=(1,))
+        >>> bundle.signal_names
+        ['alpha', 'noise', 'mixed']
     """
     rng = np.random.default_rng(seed)
     n_rows = n_dates + max(horizons)
@@ -57,6 +99,7 @@ def make_synthetic_bundle(
     )
 
     def wide(values: np.ndarray) -> pd.DataFrame:
+        """(行 x 銘柄) の配列を index=date（全行）、columns=asset_id の DataFrame にする。"""
         return pd.DataFrame(
             values,
             index=pd.Index(keys, name=DATE),
@@ -64,6 +107,10 @@ def make_synthetic_bundle(
         )
 
     def long(values: np.ndarray, name: str) -> pd.Series:
+        """配列の評価対象行（先頭 ``n_dates`` 行）を long 形式の Series にする。
+
+        返り値は index=(date, asset_id)、名前は ``name``。
+        """
         return wide(values).iloc[:n_dates].stack().rename(name)
 
     signals = pd.concat(
@@ -84,7 +131,7 @@ def make_synthetic_bundle(
     bundle = make_bundle(
         signals,
         {"total": wide(systematic + specific), "specific": wide(specific)},
-        return_kinds={"total": "total", "specific": "residual"},
+        return_kinds={"total": "total", "specific": "specific"},
         horizons=list(horizons),
         classification=classification,
         dates=keys[:n_dates],

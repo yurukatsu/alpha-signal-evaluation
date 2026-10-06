@@ -1,0 +1,70 @@
+# サンプル設定。examples/example2/make_sample_data.py で作ったデータ（月次・BARRA 形式の ID）を評価する。
+# 相対パスはこのファイルの場所を基準に解決される。
+version: 1
+
+calendar:
+  path: ./input/calendar.dat   # 本番のカレンダー。先頭のコメント行は読み飛ばす
+  index: Base_month            # 内部で全データに付与する日付キー（YYYYMM）
+  # columns: [Base_month, ...] # ヘッダー行がないファイルの場合は列名を指定する
+
+period:
+  start: "200801"              # alpha は 2008-01 から
+  end: "202607"                # 末尾はホライズン分のリターンがないため欠損になる（警告が出る）
+
+horizons: [1, 3, 6, 12]        # 単位 = カレンダーの行数（月）
+
+data:
+  signals:
+    # alpha/{Base_month}.dat は Base_month の月末時点のスコア（翌月以降のリターンで評価する）
+    source: file
+    path: ./input/alpha/{Base_month}.dat        # ヘッダー "#bid comp_ew"（先頭の # は自動で除去）
+    read_options: {sep: '\s+'}             # スペース区切り
+    columns: {asset_id: bid}
+    values: [comp_ew]
+
+universe:
+  source: file
+  path: ./input/univ/{Base_month}.dat           # "# ..." のコメント行 + ID・ウェイトのスペース区切り
+  read_options: {sep: '\s+', comment: "#", header: null, names: [bid, weight]}
+  columns: {asset_id: bid}
+
+benchmark:
+  source: file
+  path: ./input/bm/{Base_month}.dat
+  read_options: {sep: '\s+', comment: "#", header: null, names: [bid, weight]}
+  columns: {asset_id: bid, weight: weight}
+
+returns:
+  # サンプル用: Base_month ごとの月次リターン（realized = その月の実現リターン）
+  - source: file
+    path: ./input/returns/{Base_month}.csv
+    convention: realized
+    columns: {asset_id: bid}
+    series:
+      total:    {column: ret,  kind: total}
+      specific: {column: sret, kind: specific}
+  # 本番: DB から日次で取得し、カレンダーの月ごとに集約する（行 t の月 = その月の1日〜月末日）
+  # - source: db
+  #   connection: risk_models
+  #   query: ./sql/returns_daily.sql        # WHERE dt > :start AND dt <= :end
+  #   match_on: Trading_month
+  #   columns: {date: dt, asset_id: bid}
+  #   series:
+  #     total:    {column: ret,  kind: total}
+  #     specific: {column: sret, kind: specific}
+
+metrics:
+  - name: ic
+    params: {method: spearman}
+  - name: quantile
+    params: {n_quantiles: 5}
+  - name: alpha_decay
+  - name: autocorr
+    params: {lags: [1, 3, 6, 12]}
+
+execution:
+  n_jobs: 4
+
+output:
+  dir: ./output
+  formats: [csv]

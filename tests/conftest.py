@@ -6,6 +6,14 @@ import yaml
 from alpha_signal_evaluation.testing import make_synthetic_bundle
 
 
+@pytest.fixture
+def db_env(monkeypatch):
+    """DB ソースの検証を通すためのダミーの接続設定（実際には接続しない）。"""
+    monkeypatch.setenv("IRDDB_HOST", "db.example.invalid")
+    monkeypatch.setenv("RISK_MODELS_USERNAME", "user")
+    monkeypatch.setenv("RISK_MODELS_PASSWORD", "password")
+
+
 @pytest.fixture(scope="session")
 def bundle():
     return make_synthetic_bundle()
@@ -118,7 +126,7 @@ class Dataset:
                     "columns": {"asset_id": "code"},
                     "series": {
                         "total": {"column": "ret", "kind": "total"},
-                        "specific": {"column": "sret", "kind": "residual"},
+                        "specific": {"column": "sret", "kind": "specific"},
                     },
                 }
             ],

@@ -1,0 +1,263 @@
+# =============================================================================
+# config.yaml の全項目の例（リファレンス）
+#
+# - 書ける項目をすべて載せている。実際に使うときは不要な項目を削る
+# - 省略できる項目には「省略時: ...」と既定値を書いている
+# - 相対パスはこの config ファイルの場所を基準に解決される（実行ディレクトリ基準ではない）
+# - 未知のキーはエラーになる（typo を計算前に検出するため）
+# - 計算せずに検証だけするには: uv run alpha-eval validate config.yaml
+# - metric のパラメータ一覧は: uv run alpha-eval metrics list -v
+#
+# 動く例は examples/example1（日次キー・one-hot 分類）と examples/example2（月次・BARRA ID）を参照。
+# =============================================================================
+
+version: 1                     # 必須。将来構造を変えたときに旧 config を判別するため
+
+# -----------------------------------------------------------------------------
+# カレンダー: 評価の時間軸の唯一の定義（1行 = 1評価期間）
+# -----------------------------------------------------------------------------
+calendar:
+  path: ./input/calendar.dat
+  # 内部で全データに付与する日付キーの列。省略時: Base_day
+  index: Base_day
+  # ヘッダー行がないファイルの列名。省略時: ファイルのヘッダーを使う
+  #   - 区切りはタブ・スペース・全角スペースのいずれでもよい（混在可）
+  #   - 最初のデータ行の直前の行がヘッダー（先頭の # は除去）。それより前の行はコメント扱い
+  #   - 値は文字列のまま扱う。8桁 = 日付（yyyymmdd）、6桁 = 月（yyyymm）
+  # columns: [Base_day, Monthend_day, Trading_day, Rskmdl_month, Label1, Label2]
+
+# 評価期間（calendar.index の値で絞る）。省略時: カレンダーの全行
+period:
+  start: "20190329"
+  end: "20260731"
+
+# フォワードリターンのホライズン（単位 = カレンダーの行数）。省略時: [1]
+# 期末から最大ホライズン分のリターンがないと、その分は欠損になる（警告が出る）
+horizons: [1, 3, 6, 12]
+
+# -----------------------------------------------------------------------------
+# データソースの共通項目
+#
+# source: file
+#   path:         ファイルパス。{列名} でカレンダーの列をプレースホルダにできる（例: {Label2}）。
+#                 どの列でファイルを選んでも、データには calendar.index の値が付与される。
+#                 プレースホルダがなければ1ファイルとして読み、date 列を match_on の列と突き合わせる
+#   read_options: リーダー（pandas.read_csv / read_parquet / read_pickle）にそのまま渡す引数。
+#                 拡張子 .csv / .dat / .tsv / .parquet / .pkl で判定
+#   columns:      {role: 実カラム名}。role は asset_id / date / category / weight / factor / value
+#   match_on:     date 列を突き合わせるカレンダーの列（1ファイルのときだけ使う）。省略時: calendar.index
+#
+# source: db
+#   connection:   接続先 DB 名（小文字。例: risk_models, factor_jp）。io/db/config.py の Config から引く。
+#                 ホスト名・認証情報は環境変数（.env.example 参照）
+#   query:        SQL ファイル。期間は :start / :end で参照する（パイプラインが自動で渡す）
+#                   WHERE dt > :start AND dt <= :end
+#                 SQL 中のリテラルのコロンは \: でエスケープする
+#   columns:      {role: 実カラム名}
+#   match_on:     DB の日付と突き合わせるカレンダーの列（日付 8桁 または 月 6桁）
+# -----------------------------------------------------------------------------
+data:
+  # シグナル。1ソースならリストにしなくてもよい
+  signals:
+    # 日付パーティションのファイル。ヘッダー先頭の "#"（例: "#nri_code"）は自動で除去
+    - source: file
+      path: ./input/alpha/ai/{Label2}.csv
+      columns: {asset_id: nri_code}
+      # シグナル名のリスト、または {シグナル名: 列名}（ソース間で列名が重なる場合に名前を付け替える）
+      values: {ai: score}
+
+    # ヘッダーなしのファイル
+    - source: file
+      path: ./input/alpha/dss/{Label2}.csv
+      read_options: {header: null, names: [nri_code, score]}
+      columns: {asset_id: nri_code}
+      values: {dss: score}
+
+    # プレースホルダなしの1ファイル（全期間が縦に並んでいる）
+    - source: file
+      path: ./input/alpha/value_all.parquet
+      match_on: Trading_day                  # ファイルの date 列をこの列と突き合わせる
+      columns: {asset_id: code, date: dt}
+      values: [value_score, quality]
+
+    # DB
+    - source: db
+      connection: factor_jp
+      query: ./sql/momentum.sql
+      match_on: Trading_day
+      columns: {asset_id: code, date: dt}
+      values: {momentum: mom_12_1}
+
+  # 業種等の分類（任意。category metric で使う）
+  classification:
+    source: file
+    path: ./input/labels/{Label2}.csv
+    columns: {asset_id: nri_code}
+    # true なら asset_id 以外の 0/1 の列（L001〜L010 等）から、1 が立っている列名をカテゴリにする。
+    # 省略時: false（columns に category を指定する。例: {asset_id: code, category: gics_sector}）
+    one_hot: true
+
+# 評価対象のユニバース（任意）。シグナルをこの (日付, 銘柄) に絞る
+universe:
+  source: file
+  path: ./input/univ/{Trading_day}.dat
+  read_options: {sep: "\t", comment: "#", header: null, names: [nri_code, weight]}
+  # weight を指定すると、benchmark がない場合にベンチマークウェイトとしても使う
+  columns: {asset_id: nri_code, weight: weight}
+
+# ベンチマークウェイト（任意）。columns に asset_id と weight が必要
+benchmark:
+  source: file
+  path: ./input/bm/{Trading_day}.dat
+  read_options: {sep: '\s+', comment: "#", header: null, names: [nri_code, weight]}
+  columns: {asset_id: nri_code, weight: weight}
+
+# -----------------------------------------------------------------------------
+# リターン: 名前付き系列の集合。系列名は全ソースで一意
+#
+# kind:       total（複利で集約）/ specific（加算で集約）。期間内の集約方法は kind から決まる
+# convention: realized（行 t のリターン = 行 t-1 → t の実現リターン）/ forward（行 t → t+1）。
+#             省略時: realized。行 t のシグナルに対し、realized なら行 t+1〜t+h、forward なら行 t〜t+h-1 を束ねる
+# -----------------------------------------------------------------------------
+returns:
+  # DB: 日次で1クエリにまとめて取得し、カレンダー期間に集約する（match_on 必須）。
+  #     match_on が日付なら (前行の日付, 当該行の日付]、月ならその月の1日〜月末日を1期間とする
+  - source: db
+    connection: risk_models
+    query: ./sql/barra_returns_daily.sql
+    match_on: Trading_day
+    convention: realized
+    columns: {date: dt, asset_id: code}
+    series:
+      total:    {column: ret,  kind: total}
+      specific: {column: sret, kind: specific}
+
+  # ファイル: カレンダーの行ごとに1ファイル = すでに期間リターン（集約しない）
+  - source: file
+    path: ./input/returns/other_model/{Base_day}.csv
+    convention: realized
+    columns: {asset_id: code}
+    series:
+      other_specific: {column: sret, kind: specific}
+
+# -----------------------------------------------------------------------------
+# リスクモデル（任意）。1つのモデルのデータを束ねる（別モデルとの混在を防ぐ）
+# -----------------------------------------------------------------------------
+risk_models:
+  barra:
+    # エクスポージャー: asset_id 以外の数値列がファクター
+    exposures:
+      source: file
+      path: ./input/barra/{Rskmdl_month}/exposure.dat
+      read_options: {sep: "\t"}
+      columns: {asset_id: code}
+    # ファクター共分散・固有リスク: 現状はソースの形式のまま読み込む
+    factor_covariance:
+      source: file
+      path: ./input/barra/{Rskmdl_month}/covariance.dat
+      read_options: {sep: "\t"}
+    specific_risk:
+      source: file
+      path: ./input/barra/{Rskmdl_month}/specific_risk.dat
+      read_options: {sep: "\t"}
+      columns: {asset_id: code}
+    # ファクターリターン: long 形式（factor, value）。日次→期間の集約は加算
+    factor_returns:
+      source: db
+      connection: risk_models
+      query: ./sql/barra_factor_returns_daily.sql
+      match_on: Trading_day
+      convention: realized
+      columns: {date: dt, factor: factor_name, value: fret}
+    # このモデルに対応するスペシフィックリターン（returns の系列名）
+    specific_return: specific
+    # ファクターの分類。factor_correlation の factor_group 等で使う
+    factor_groups:
+      style: [SIZE, MOMENTUM, VALUE, VOLATILITY]
+      industry: [BANKS, INSURANCE, RETAIL]
+
+# ポートフォリオ（Brinson・リスク分解の入力）は将来のために予約している。現状は指定するとエラー
+# portfolios: []
+
+# -----------------------------------------------------------------------------
+# metrics: 実行する評価指標。params を省略すると既定値
+#
+# 共通:
+#   name:    metric 名（必須）
+#   id:      結果のキー。同じ metric を複数回使う場合は必須。省略時: name
+#   enabled: false なら実行しない。省略時: true
+#   params:  metric ごとのパラメータ。signals / returns / horizons は省略時に全て
+# -----------------------------------------------------------------------------
+metrics:
+  # IC（シグナルとフォワードリターンのクロスセクション相関）
+  - name: ic
+    params:
+      method: spearman          # spearman / pearson
+      signals: [ai, dss]
+      returns: [total, specific]
+      horizons: [1, 3, 6, 12]   # 全体の horizons の部分集合
+      min_obs: 10               # 日付ごとの最小銘柄数（未満なら欠損）
+
+  # 分位分析（等ウェイトの分位ポートフォリオと上位 − 下位のスプレッド）
+  - name: quantile
+    params:
+      n_quantiles: 5
+      demean: false             # true なら日付ごとのユニバース平均を差し引いた超過リターンで集計
+      aggregation:
+        # 累積リターン系列の計算方法（kind ごと）。指定しなかった kind は既定値
+        # 省略時: {total: compound, specific: sum}
+        cumulative: {total: compound, specific: sum}
+
+  # 同じ metric を別の設定でもう一度使う場合は id 必須
+  - name: quantile
+    id: quantile_q10_specific
+    params: {n_quantiles: 10, signals: [ai], returns: [specific], horizons: [1]}
+
+  # カテゴリ（業種等）内の IC とカテゴリ別の平均シグナル（classification が必要）
+  - name: category
+    params:
+      method: spearman
+      returns: [specific]
+      horizons: [1]
+      min_obs: 5
+      column: category          # classification の列（role 名）
+
+  # ホライズン別の IC・分位スプレッド
+  - name: alpha_decay
+    params:
+      method: spearman
+      n_quantiles: 5
+      min_obs: 10
+
+  # シグナルのクロスセクション自己相関・偏自己相関（ラグの単位はカレンダーの行数）
+  - name: autocorr
+    params:
+      lags: [1, 2, 3, 6, 12]
+      method: spearman
+      min_obs: 10
+
+  # シグナル間（とシグナル × リスクモデルのエクスポージャー）の相関
+  - name: factor_correlation
+    enabled: false              # 一時的に止めたい metric は enabled: false
+    params:
+      method: spearman
+      include_exposures: true   # リスクモデルがあればエクスポージャーとの相関も出す
+      risk_model: barra         # リスクモデルが1つなら省略可
+      factor_group: style       # factor_groups のこのグループに絞る（なければ全ファクター）
+      min_obs: 10
+
+# -----------------------------------------------------------------------------
+# 実行・出力
+# -----------------------------------------------------------------------------
+execution:
+  n_jobs: 4                     # metric の並列数。省略時: 1
+
+output:
+  dir: ./output                 # 省略時: ./out
+  formats: [csv]                # csv / parquet / xlsx（複数可）。省略時: [csv]
+                                # csv は Excel で文字化けしないよう BOM 付き UTF-8
+
+# DB 取得結果のローカルキャッシュ（クエリと期間のハッシュがキー）
+cache:
+  enabled: true                 # 省略時: true
+  dir: ./.cache                 # 省略時: ./.cache

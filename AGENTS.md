@@ -16,7 +16,8 @@
 2. **欠損は欠損のまま。** リターンを 0 埋めしない（集約は `min_count=1`、ローリングは `min_periods=h`）。
 3. **設定ミスは計算前にすべて検出する。** 構造は `config.py`（pydantic、`extra="forbid"`）、
    意味（カレンダー・レジストリ・ファイル存在）は `validation.py`。新しい設定項目を足したら両方を検討する。
-4. **認証情報はコードにも config にも書かない。** 環境変数から読む（`io/db/configs/`）。
+4. **認証情報・接続先ホスト名はコードにも config にも書かない。** 環境変数から読む（`io/db/config.py`）。
+   公開リポジトリのため、社内のホスト名・IP アドレス・URL もコミットしない。
 
 ## レイヤーと依存方向
 
@@ -27,6 +28,8 @@ cli → api → validation / pipeline → data → io
 ```
 
 - `io/`: 物理的な入出力（ファイル読み込み、DB、キャッシュ）。`data/` の型を知らない。
+  `io/db` は社内ライブラリ namdb v0.1.2 の構成（`config.py` / `client.py` / `drivers/`）をそのまま取り込んでいる。
+  接続先を足すときは `config.py` に Config を追加する（`connections.py` が DB 名で自動的に引けるようにする）。
 - `data/`: カレンダー、ColumnMap（role → 実カラム名）、ソースの読み込み（`loaders.py`）、`DataBundle`。
 - `pipeline/preprocess.py`: 期間集約・フォワードリターン・ユニバース適用・`DataBundle` の組み立て。
 - `pipeline/runner.py`: metrics の実行（並列時は `DataBundle` を initializer で1回だけ渡す）。失敗は metric 単位で隔離。

@@ -36,7 +36,7 @@ def test_bundle_contents(dataset):
     t = 2
     expected = np.prod(1 + dataset.total[t + 1 : t + 4, 0]) - 1
     assert fwd.loc[dataset.base[t], "0001"] == pytest.approx(expected)
-    # residual は加算
+    # specific は加算
     fwd_s = bundle.forward_returns["specific"][3]
     assert fwd_s.loc[dataset.base[t], "0001"] == pytest.approx(
         0.5 * dataset.total[t + 1 : t + 4, 0].sum()
@@ -84,6 +84,15 @@ def test_report_is_saved(dataset):
     }  # category は summary を持たない
 
 
+def test_report_is_saved_as_csv(dataset, tmp_path):
+    report = evaluate(dataset.write_config())
+    out = report.save(tmp_path / "csv_out", ["csv"])
+    assert (out / "summary.csv").read_bytes().startswith(b"\xef\xbb\xbf")  # Excel 向けの BOM
+    ic = pd.read_csv(out / "ic" / "summary.csv", encoding="utf-8-sig")
+    pd.testing.assert_frame_equal(ic, report["ic"].tables["summary"], check_dtype=False)
+    assert not list(out.glob("**/*.parquet"))
+
+
 class FakeDB:
     def __init__(self, daily: pd.DataFrame):
         self.daily = daily
@@ -99,7 +108,7 @@ class FakeDB:
         pass
 
 
-def test_db_pipeline_aggregates_daily_returns(dataset, monkeypatch):
+def test_db_pipeline_aggregates_daily_returns(dataset, monkeypatch, db_env):
     rng = np.random.default_rng(5)
     days = pd.bdate_range("2019-12-01", "2021-03-31")
     daily = pd.DataFrame(
@@ -130,7 +139,7 @@ def test_db_pipeline_aggregates_daily_returns(dataset, monkeypatch):
             "columns": {"date": "dt", "asset_id": "code"},
             "series": {
                 "total": {"column": "ret", "kind": "total"},
-                "specific": {"column": "sret", "kind": "residual"},
+                "specific": {"column": "sret", "kind": "specific"},
             },
         }
     ]
@@ -169,7 +178,7 @@ def test_validation_reports_all_problems_at_once(dataset):
     assert "placeholders ['Rskmdl']" in text
 
 
-def test_db_source_requires_eight_digit_match_on(dataset):
+def test_db_source_accepts_month_match_on(dataset):
     (dataset.root / "q.sql").write_text("SELECT 1")
     universe = {
         "source": "db",
@@ -179,9 +188,30 @@ def test_db_source_requires_eight_digit_match_on(dataset):
         "columns": {"asset_id": "code", "date": "dt"},
     }
     result = validate(dataset.write_config(universe=universe))
-    text = "\n".join(result.errors)
-    assert "8-digit" in text
-    assert "unknown connection 'unknown_db'" in text
+    # 月（6桁）の match_on は許可される。接続先の誤りだけが報告される
+    assert len(result.errors) == 1
+    assert result.errors[0].startswith("universe.connection: unknown connection 'unknown_db'")
+
+
+def test_db_connection_settings_are_checked(dataset, monkeypatch):
+    for name in ["IRDDB_HOST", "RISK_MODELS_USERNAME", "RISK_MODELS_PASSWORD"]:
+        monkeypatch.delenv(name, raising=False)
+    (dataset.root / "q.sql").write_text("SELECT 1")
+    returns = [
+        {
+            "source": "db",
+            "connection": "risk_models",
+            "query": "q.sql",
+            "match_on": "Trading_day",
+            "columns": {"date": "dt", "asset_id": "code"},
+            "series": {"total": {"column": "ret", "kind": "total"}},
+        }
+    ]
+    result = validate(dataset.write_config(returns=returns))
+    assert result.errors == [
+        "connection 'risk_models' (RiskModelsConfig): host, username, password not set; "
+        "set the environment variables (see .env.example)"
+    ]
 
 
 def test_evaluate_raises_before_computing(dataset):
@@ -310,7 +340,7 @@ class MultiQueryDB(FakeDB):
         return super().execute(sql, params)
 
 
-def test_db_snapshot_source(dataset, monkeypatch):
+def test_db_snapshot_source(dataset, monkeypatch, db_env):
     rows = [
         {"dt": pd.Timestamp(t), "code": c, "sector": f"S{i % 2}"}
         for t in dataset.trading

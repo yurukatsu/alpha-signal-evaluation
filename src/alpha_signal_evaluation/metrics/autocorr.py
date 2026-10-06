@@ -1,3 +1,9 @@
+"""シグナルの自己相関の metric ``autocorr``。
+
+シグナルのクロスセクション（銘柄の並び）がカレンダー上の数行前とどれだけ似ているか
+（シグナルの持続性・回転の目安）を、自己相関と偏自己相関で測る。
+"""
+
 from typing import Literal
 
 import numpy as np
@@ -11,6 +17,20 @@ from .registry import register_metric
 
 
 class AutocorrParams(MetricParams):
+    """``autocorr`` metric のパラメータ。
+
+    リターンを使わないため ``SignalReturnParams`` ではなく ``MetricParams`` を継承する
+    （``signals`` は ``Metric.check`` が存在を自動で検証する）。
+
+    Attributes:
+        signals: 評価するシグナル名。デフォルト ``None``（全シグナル）。
+        lags: 出力するラグ（カレンダーの行数）のリスト。デフォルト ``[1, 2, 3, 6, 12]``。
+            空でない正の整数のリストであること。重複を除いて昇順に並べ替えられる。
+        method: 相関の種類。``"spearman"``（順位相関、デフォルト）または ``"pearson"``。
+        min_obs: 行 t と t−k の両方にシグナルがある銘柄の最小数（3 以上）。
+            デフォルト 10。未満の行の自己相関は欠損。
+    """
+
     signals: list[str] | None = None
     lags: list[int] = Field(default_factory=lambda: [1, 2, 3, 6, 12])
     method: Literal["spearman", "pearson"] = "spearman"
@@ -19,13 +39,38 @@ class AutocorrParams(MetricParams):
     @field_validator("lags")
     @classmethod
     def _positive(cls, v: list[int]) -> list[int]:
+        """``lags`` が空でなく全て 1 以上であることを検証し、重複を除いて昇順にする。
+
+        Args:
+            v: 入力されたラグのリスト。
+
+        Returns:
+            重複を除いて昇順に並べたラグのリスト。
+
+        Raises:
+            ValueError: 空のリスト、または 1 未満のラグを含む場合。
+        """
         if not v or any(lag < 1 for lag in v):
             raise ValueError("lags must be a non-empty list of positive integers")
         return sorted(set(v))
 
 
 def _rowwise_corr(a: pd.DataFrame, b: pd.DataFrame, method: str, min_obs: int) -> pd.DataFrame:
-    """同じ行（日付）同士の銘柄方向の相関。両方が揃っている銘柄だけを使う。"""
+    """同じ行（日付）同士の銘柄方向の相関を求める。
+
+    行ごとに ``a`` と ``b`` の両方が欠損でない銘柄だけを使う。``method="spearman"`` は
+    その共通銘柄の中で行ごとに順位（同順位は平均順位）に変換してからピアソン相関を取る。
+
+    Args:
+        a: (date x asset) の wide 形式の値。
+        b: ``a`` と同じ index・columns の値（通常 ``a`` を行方向にずらしたもの）。
+        method: ``"spearman"`` または ``"pearson"``。
+        min_obs: 相関を計算する最小銘柄数。未満の行の相関は欠損。
+
+    Returns:
+        index=``a`` の index（date）、columns=[autocorr, n] の DataFrame。
+        ``n`` は両方が揃っている銘柄数。
+    """
     mask = a.notna() & b.notna()
     a, b = a.where(mask), b.where(mask)
     if method == "spearman":
@@ -39,7 +84,17 @@ def _rowwise_corr(a: pd.DataFrame, b: pd.DataFrame, method: str, min_obs: int) -
 
 
 def _pacf(acf: np.ndarray) -> np.ndarray:
-    """ラグ 1..K の自己相関から偏自己相関を求める（Durbin-Levinson）。"""
+    """ラグ 1..K の自己相関から偏自己相関を求める（Durbin-Levinson 再帰）。
+
+    途中のラグで自己相関が欠損・非有限になった、または分母が 0 になった場合は
+    そこで打ち切り、以降のラグは NaN のまま返す。
+
+    Args:
+        acf: ラグ 1..K の自己相関（長さ K、``acf[k - 1]`` がラグ k）。
+
+    Returns:
+        ラグ 1..K の偏自己相関（長さ K）。
+    """
     k_max = len(acf)
     rho = np.concatenate([[1.0], acf])
     pacf = np.full(k_max, np.nan)
@@ -63,6 +118,21 @@ class SignalAutocorrelation(Metric):
     ラグの単位はカレンダーの行数。bundle.signal_panel は評価対象の全カレンダー行で
     reindex されるため、行のずらしがそのままカレンダー上のラグになる。
     （シグナル同士の比較であり、シグナルとリターンの時点合わせではない）
+
+    シグナルごとに、(date x asset) のパネルと k 行ずらしたパネルについて、行ごとに
+    両方が揃っている銘柄の相関（spearman は順位に変換してから）を求める。
+    銘柄数が ``min_obs`` 未満の行は欠損。ラグ k の自己相関（ACF）はこの時系列の平均
+    （欠損を除く）。偏自己相関（PACF）は、ラグ 1..max(lags) の時系列平均 ACF から
+    Durbin-Levinson 再帰で求める（そのため ACF は ``lags`` に含まれないラグも内部で計算する）。
+
+    パラメータは :class:`AutocorrParams` を参照。
+
+    出力:
+        tables["timeseries"]: ``lags`` の各ラグについての行ごとの自己相関
+            （評価対象の全カレンダー行）。columns=[date, autocorr, n, signal, lag]。
+            ``n`` は行 t と t−k の両方にシグナルがある銘柄数。
+        tables["summary"]: 1行が (signal, lag) の1組。columns=[signal, lag, acf, pacf]。
+        summary: ``"{signal}/lag{lag}/acf"`` → ACF。
     """
 
     name = "autocorr"
@@ -71,6 +141,15 @@ class SignalAutocorrelation(Metric):
     Params = AutocorrParams
 
     def compute(self, data: DataBundle) -> MetricResult:
+        """全てのシグナルについて自己相関の時系列と ACF・PACF を求める。
+
+        Args:
+            data: pipeline が用意したデータ（シグナルだけを使う）。
+
+        Returns:
+            ``timeseries`` / ``summary`` の表、ACF の summary、ラグの単位と PACF の
+            求め方の注記を持つ MetricResult。
+        """
         p = self.params
         max_lag = max(p.lags)
         series, summary = [], []
