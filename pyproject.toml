@@ -43,6 +43,7 @@ app = [
     "streamlit>=1.64.0",
 ]
 dev = [
+    "poethepoet>=0.48.0",
     "pytest>=9.1.1",
     "ruff>=0.16.9",
 ]
@@ -56,6 +57,13 @@ testpaths = ["tests"]
 addopts = "-m 'not integration'"
 markers = [
     "integration: tests that connect to external databases",
+]
+
+[tool.poe.tasks]
+# import の並べ替え → フォーマットの順に実行する
+fix = [
+    { cmd = "ruff check --select I --fix src tests notebooks" },
+    { cmd = "ruff format src tests notebooks" },
 ]
 
 [tool.ruff]

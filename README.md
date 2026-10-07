@@ -86,6 +86,9 @@ InformationCoefficient(method="pearson").compute(bundle)
 
 ## 新しい metric を追加する
 
+notebook で試作してからパッケージに組み込むまでの手順は
+[notebooks/metric_development_tutorial.ipynb](notebooks/metric_development_tutorial.ipynb) にステップごとにまとめてある。
+
 1. `src/alpha_signal_evaluation/metrics/_template.py` を `metrics/<名前>.py` にコピーして書き換える
 2. config.yaml の `metrics` に `- name: <名前>` を追加
 3. `uv run pytest tests/metrics/test_contract.py` — 置いたファイルは自動で契約テストの対象になる
