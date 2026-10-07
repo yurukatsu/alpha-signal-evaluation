@@ -22,7 +22,15 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from .config import DBSource, EvaluationConfig, FileSource, MetricEntry
+from .config import (
+    BarraReturnsSource,
+    BarraRiskModelConfig,
+    DBSource,
+    EvaluationConfig,
+    FileSource,
+    MetricEntry,
+)
+from .data.barra import BARRA_CONNECTIONS
 from .data.bundle import DataSpec
 from .data.calendar import Calendar, check_increasing, load_calendar
 from .data.columns import WEIGHT
@@ -216,6 +224,7 @@ def _iter_sources(
     対象は ``data.signals`` / ``data.classification`` / ``universe`` / ``benchmark`` /
     ``returns`` / ``risk_models.<名前>.<構成要素>`` の順。ラベルはエラーメッセージに使う
     config 上の位置（例: ``returns[0]``）。``returns`` と ``factor_returns`` が期間データ。
+    ``source: barra`` のソースとリスクモデルは含めない（``_iter_barra``）。
 
     Yields:
         ``(ラベル, ソース, 期間データなら True)`` のタプル。
@@ -230,8 +239,11 @@ def _iter_sources(
     if cfg.benchmark is not None:
         yield "benchmark", cfg.benchmark, False
     for i, source in enumerate(cfg.returns):
-        yield f"returns[{i}]", source, True
+        if not isinstance(source, BarraReturnsSource):
+            yield f"returns[{i}]", source, True
     for name, model in cfg.risk_models.items():
+        if isinstance(model, BarraRiskModelConfig):
+            continue
         for component in sorted(model.components):
             yield (
                 f"risk_models.{name}.{component}",
@@ -294,18 +306,71 @@ def _check_source(
     if not Path(source.query).is_file():
         errors.append(f"{label}.query: file not found: {source.query}")
     if match_on in columns:
-        values = calendar.frame[match_on]
-        if not values.str.fullmatch(_DATE_OR_MONTH.pattern).fillna(False).all():
-            errors.append(
-                f"{label}.match_on: DB sources must match on a date (yyyymmdd) or "
-                f"month (yyyymm) column; {match_on!r} is not"
-            )
-        elif is_period and plan is not None:
-            try:
-                check_increasing(values.iloc[plan.ext_pos], match_on)
-            except ValueError as e:
-                errors.append(f"{label}.match_on: {e}")
+        errors += _check_date_column(label, match_on, is_period, calendar, plan)
     return errors
+
+
+def _check_date_column(
+    label: str,
+    match_on: str,
+    is_period: bool,
+    calendar: Calendar,
+    plan: EvaluationPlan | None,
+) -> list[str]:
+    """DB・Barra のソースの ``match_on`` 列（カレンダーにある列）の値を検証する。
+
+    値がすべて日付（8桁）または月（6桁）であること。期間データで ``plan`` があれば、
+    延長行の範囲で重複なしの昇順であること（期間の境界に使うため）。
+
+    Returns:
+        エラーメッセージのリスト。
+    """
+    values = calendar.frame[match_on]
+    if not values.str.fullmatch(_DATE_OR_MONTH.pattern).fillna(False).all():
+        return [
+            f"{label}.match_on: DB sources must match on a date (yyyymmdd) or "
+            f"month (yyyymm) column; {match_on!r} is not"
+        ]
+    if is_period and plan is not None:
+        try:
+            check_increasing(values.iloc[plan.ext_pos], match_on)
+        except ValueError as e:
+            return [f"{label}.match_on: {e}"]
+    return []
+
+
+def _iter_barra(cfg: EvaluationConfig) -> Iterator[tuple[str, str, bool]]:
+    """``source: barra`` の (ラベル, match_on, 期間データか) を列挙する。
+
+    ``returns`` の要素は期間データ。リスクモデルは ``factor_returns`` を読む場合に期間データ
+    （延長行の境界に使う）。
+
+    Yields:
+        ``(ラベル, match_on, 期間データなら True)`` のタプル。
+    """
+    for i, source in enumerate(cfg.returns):
+        if isinstance(source, BarraReturnsSource):
+            yield f"returns[{i}]", source.match_on, True
+    for name, model in cfg.risk_models.items():
+        if isinstance(model, BarraRiskModelConfig):
+            yield f"risk_models.{name}", model.match_on, "factor_returns" in model.components
+
+
+def _check_barra(
+    label: str,
+    match_on: str,
+    is_period: bool,
+    calendar: Calendar,
+    plan: EvaluationPlan | None,
+) -> list[str]:
+    """Barra のソースの ``match_on`` がカレンダーの日付・月の列であることを検証する。
+
+    Returns:
+        エラーメッセージのリスト。
+    """
+    if match_on not in calendar.columns:
+        return [f"{label}.match_on: calendar has no column {match_on!r}"]
+    return _check_date_column(label, match_on, is_period, calendar, plan)
 
 
 def _missing_files(
@@ -341,13 +406,16 @@ def _check_connections(cfg: EvaluationConfig) -> list[str]:
     """DB ソースが使う接続先ごとに、ホスト名・認証情報が環境変数から読めるかを確認する。
 
     接続先は重複を除いて1回ずつ確認する（実際の接続はしない）。未知の接続先名は
-    ``_check_source`` が報告するため、ここでは飛ばす。
+    ``_check_source`` が報告するため、ここでは飛ばす。``source: barra`` があれば
+    ``data.barra.BARRA_CONNECTIONS`` の接続先も確認する。
 
     Returns:
         ``host`` / ``username`` / ``password`` のいずれかが未設定の接続先ごとのエラーメッセージ。
     """
     errors = []
     used = dict.fromkeys(s.connection for _, s, _ in _iter_sources(cfg) if isinstance(s, DBSource))
+    if any(True for _ in _iter_barra(cfg)):
+        used |= dict.fromkeys(BARRA_CONNECTIONS)
     for connection in used:
         try:
             config = get_connection_config(connection)
@@ -371,7 +439,8 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
     1. config からデータを読むのに必要な ``calendar`` と ``data`` があるか
     2. カレンダーを読み込み、``period`` に該当する行があるか（ホライズン分の行が
        カレンダーの末尾に足りなければ警告）
-    3. 各データソースの設定（プレースホルダ・``match_on``・拡張子・DB の接続先と SQL）
+    3. 各データソースの設定（プレースホルダ・``match_on``・拡張子・DB の接続先と SQL、
+       Barra の ``match_on``）
     4. DB の接続先ごとのホスト名・認証情報の環境変数
     5. 有効な metric の名前・params・要求データ（``spec_from_config()`` と照合）
     6. ``check_files=True`` で、ここまでエラーがなければ、必要なファイルがすべて存在するか
@@ -408,6 +477,8 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
             report.warnings.append(plan.tail_warning)
         for label, source, is_period in _iter_sources(cfg):
             report.errors += _check_source(label, source, is_period, calendar, plan)
+        for label, match_on, is_period in _iter_barra(cfg):
+            report.errors += _check_barra(label, match_on, is_period, calendar, plan)
 
     report.errors += _check_connections(cfg)
     report.errors += validate_metrics(cfg.enabled_metrics, spec_from_config(cfg))

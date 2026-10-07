@@ -55,7 +55,9 @@ class RiskModelData:
     Attributes:
         exposures: ファクターエクスポージャー。index=(date, asset_id)、columns=ファクター名。
             config から読み込む場合は数値列だけが残される。
-        factor_covariance: ファクター共分散。index=date。列の形式はソースのまま
+        factor_covariance: ファクター共分散。Barra（``source: barra``）では
+            index=(date, factor)、columns=ファクター名で、日付ごとの正方行列を縦に積んだもの
+            （年率、小数の2乗）。それ以外のソースでは index=date、列の形式はソースのまま
             （このパッケージでは解釈しない）。
         specific_risk: スペシフィックリスク。index=(date, asset_id)、列はソースのまま。
         forward_factor_returns: ホライズン（カレンダー行数） -> フォワードファクターリターン
@@ -68,7 +70,7 @@ class RiskModelData:
     """
 
     exposures: pd.DataFrame | None = None  # index=(date, asset_id), columns=ファクター
-    factor_covariance: pd.DataFrame | None = None  # index=date。形式はソースのまま
+    factor_covariance: pd.DataFrame | None = None  # Barra: (date, factor) x factor
     specific_risk: pd.DataFrame | None = None  # index=(date, asset_id)
     # horizon -> (date x factor)。forward_returns と同じ規約で時点合わせ済み（加算で集約）
     forward_factor_returns: dict[int, pd.DataFrame] = field(default_factory=dict)

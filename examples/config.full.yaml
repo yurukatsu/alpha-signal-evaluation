@@ -140,6 +140,17 @@ returns:
     series:
       other_specific: {column: sret, kind: specific}
 
+  # Barra: SQL を書かずに社内 DB の Barra のリターンを読む（data/barra.py。match_on 必須）。
+  #   DRTN（取引通貨建てのトータル）→ total、SRTN → specific。日次の % を小数にして期間に集約する。
+  #   銘柄 ID は BID を nri_code に変換する（fs_trfac_glb.barraid_jp）。
+  #   currency: USD なら トータルリターンを日次で USD 建てにする（GEM3 / GEMLT は現地通貨建て）。省略時: local
+  #   series: {系列名: total | specific}。省略時: {total: total, specific: specific}
+  - source: barra
+    model: GEM3                 # JPE4 / GEMLT / GEM3
+    match_on: Trading_day
+    currency: USD
+    series: {gem3_total: total, gem3_specific: specific}
+
 # -----------------------------------------------------------------------------
 # リスクモデル（任意）。1つのモデルのデータを束ねる（別モデルとの混在を防ぐ）
 # -----------------------------------------------------------------------------
@@ -175,6 +186,18 @@ risk_models:
     factor_groups:
       style: [SIZE, MOMENTUM, VALUE, VOLATILITY]
       industry: [BANKS, INSURANCE, RETAIL]
+
+  # Barra: source: barra と書くと、構成要素を社内 DB から読む（data/barra.py）
+  #   exposures / factor_covariance: 評価行の match_on の日付以前で最新の Barra の営業日のデータ
+  #   factor_returns: 日次（小数）を match_on の境界で期間に加算で集約する
+  #   ファクター名は {model}_FAC の FAC（"JPE4_" 等の接頭辞を除く）。共分散は年率・小数の2乗
+  #   factor_groups は省略すると FGROUP から作る（risk_indices / industries 等。risk_indices は style とも呼べる）
+  gem3:
+    source: barra
+    model: GEM3
+    match_on: Trading_day
+    components: [exposures, factor_covariance, factor_returns]   # 省略時: 3つすべて
+    specific_return: gem3_specific
 
 # ポートフォリオ（Brinson・リスク分解の入力）は将来のために予約している。現状は指定するとエラー
 # portfolios: []

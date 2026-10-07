@@ -28,7 +28,9 @@ from pydantic import (
     BaseModel,
     BeforeValidator,
     ConfigDict,
+    Discriminator,
     Field,
+    Tag,
     ValidationInfo,
     field_validator,
     model_validator,
@@ -359,7 +361,78 @@ class ReturnsDBSource(DBSource):
     match_on: str  # DB は日次で取得してカレンダー期間に集約するため必須
 
 
-ReturnsSource = Annotated[ReturnsFileSource | ReturnsDBSource, Field(discriminator="source")]
+BarraModel: TypeAlias = Literal["JPE4", "GEMLT", "GEM3"]
+BarraComponent: TypeAlias = Literal["exposures", "factor_covariance", "factor_returns"]
+Currency: TypeAlias = Literal["local", "USD"]
+
+
+def _barra_series(value: Any) -> Any:
+    """Barra の ``series`` の ``{系列名: kind}`` を ``{系列名: ReturnSeries}`` の形に展開する。
+
+    値が文字列（``total`` / ``specific``）なら ``{"column": v, "kind": v}`` にする
+    （Barra ソースの読み込み結果は kind と同じ名前の列を持つ）。それ以外はそのまま返し、
+    pydantic の型検証に任せる。
+    """
+    if isinstance(value, dict):
+        return {k: {"column": v, "kind": v} if isinstance(v, str) else v for k, v in value.items()}
+    return value
+
+
+def _default_barra_series() -> dict[str, ReturnSeries]:
+    """Barra の ``series`` の既定値（``total`` と ``specific`` の両方）。"""
+    return {k: ReturnSeries(column=k, kind=k) for k in ("total", "specific")}
+
+
+class BarraReturnsSource(_Base):
+    """Barra のトータル・スペシフィックリターン（``returns`` の要素、``source: barra``）。
+
+    社内 DB（接続先 ``risk_models``）から日次の DRTN（トータル）・SRTN（スペシフィック）を
+    取得し、``match_on`` の列を境界としてカレンダー期間に集約する（total は複利、
+    specific は加算）。単位の換算（% → 小数）と銘柄 ID の変換（BID → nri_code）は
+    読み込み時に行う。詳細は ``data/barra.py``。
+
+    Attributes:
+        source: ソース種別の判別子。常に ``"barra"``（YAML ``source: barra``）。
+        model: Barra のモデル（YAML ``model``、必須）。``JPE4`` / ``GEMLT`` / ``GEM3``。
+        match_on: 期間の境界となるカレンダーの列（YAML ``match_on``、必須）。
+            日付（yyyymmdd）または月（yyyymm）の列。
+        convention: 期間リターンの時点の規約（YAML ``convention``、既定 ``"realized"``）。
+        currency: トータルリターンの通貨（YAML ``currency``、既定 ``"local"``）。
+            ``local`` は取引通貨建て（DB の値のまま）、``USD`` は日次で為替を掛けて
+            USD 建てにする。スペシフィックリターンは通貨によらずそのまま。
+        series: ``{系列名: kind}``（YAML ``series``、既定 ``{total: total, specific: specific}``）。
+            kind は ``total``（DRTN）または ``specific``（SRTN）。系列名は全リターンソースで
+            一意である必要がある。
+    """
+
+    source: Literal["barra"]
+    model: BarraModel
+    match_on: str
+    convention: Convention = "realized"
+    currency: Currency = "local"
+    series: Annotated[dict[str, ReturnSeries], BeforeValidator(_barra_series)] = Field(
+        default_factory=_default_barra_series, min_length=1
+    )
+
+    @model_validator(mode="after")
+    def _column_is_kind(self) -> "BarraReturnsSource":
+        """各系列の ``column`` が ``kind`` と同じであることを確認する（列名は選べない）。
+
+        Raises:
+            ValueError: ``{column: ..., kind: ...}`` の形で異なる列名を指定した場合。
+        """
+        bad = sorted(name for name, s in self.series.items() if s.column != s.kind)
+        if bad:
+            raise ValueError(
+                f"series {bad}: write the kind only (e.g. `total: total`); "
+                "Barra sources have no column names to choose"
+            )
+        return self
+
+
+ReturnsSource = Annotated[
+    ReturnsFileSource | ReturnsDBSource | BarraReturnsSource, Field(discriminator="source")
+]
 
 
 class FactorReturnsFileSource(FileSource):
@@ -502,6 +575,62 @@ class RiskModelConfig(_Base):
         return {n for n in names if getattr(self, n) is not None}
 
 
+class BarraRiskModelConfig(_Base):
+    """Barra のリスクモデル（``risk_models.<名前>`` に ``source: barra`` と書いた場合）。
+
+    社内 DB（接続先 ``risk_models``）から、``components`` に指定した構成要素を読む。
+    ファクター名は ``{model}_FAC`` テーブルの FAC（モデル名の接頭辞を除いたもの）、
+    ``factor_groups`` の既定値は同じテーブルの FGROUP から作る。詳細は ``data/barra.py``。
+
+    - exposures / factor_covariance: 評価行の ``match_on`` の日付（6桁の月なら月末日）
+      以前で最新の Barra のデータ（スナップショット）
+    - factor_returns: 日次のファクターリターンを ``match_on`` の列を境界として期間に
+      加算で集約する
+
+    Attributes:
+        source: 判別子。常に ``"barra"``（YAML ``source: barra``）。
+        model: Barra のモデル（YAML ``model``、必須）。``JPE4`` / ``GEMLT`` / ``GEM3``。
+        match_on: スナップショットの日付と期間の境界に使うカレンダーの列
+            （YAML ``match_on``、必須）。日付（yyyymmdd）または月（yyyymm）の列。
+        convention: ファクターリターンの時点の規約（YAML ``convention``、既定 ``"realized"``）。
+        components: 読み込む構成要素（YAML ``components``、既定は3つすべて）。
+            ``exposures`` / ``factor_covariance`` / ``factor_returns`` から選ぶ。
+        specific_return: このモデルに対応するスペシフィックリターンの系列名
+            （YAML ``specific_return``、既定 ``None``）。``RiskModelConfig`` と同じ。
+        factor_groups: ``{グループ名: [ファクター名, ...]}``（YAML ``factor_groups``、
+            既定 ``None`` = FGROUP から自動で作る）。
+    """
+
+    source: Literal["barra"]
+    model: BarraModel
+    match_on: str
+    convention: Convention = "realized"
+    components: list[BarraComponent] = Field(
+        default_factory=lambda: ["exposures", "factor_covariance", "factor_returns"],
+        min_length=1,
+    )
+    specific_return: str | None = None
+    factor_groups: dict[str, list[str]] | None = None
+
+    @field_validator("components")
+    @classmethod
+    def _unique_components(cls, v: list[str]) -> list[str]:
+        """``components`` の重複を除く（順序は保つ）。"""
+        return list(dict.fromkeys(v))
+
+
+def _risk_model_tag(value: Any) -> str:
+    """``risk_models.<名前>`` の判別子。``source: barra`` なら ``barra``、それ以外は ``custom``。"""
+    source = value.get("source") if isinstance(value, dict) else getattr(value, "source", None)
+    return "barra" if source == "barra" else "custom"
+
+
+RiskModelSource = Annotated[
+    Annotated[RiskModelConfig, Tag("custom")] | Annotated[BarraRiskModelConfig, Tag("barra")],
+    Discriminator(_risk_model_tag),
+]
+
+
 class MetricEntry(_Base):
     """``metrics`` の1要素。実行する metric とそのパラメータ。
 
@@ -596,7 +725,8 @@ class EvaluationConfig(_Base):
         benchmark: ベンチマークウェイト（YAML ``benchmark``、既定 ``None``）。
             ``asset_id`` と ``weight`` role の列が必要。
         returns: リターンソースのリスト（YAML ``returns``、既定 ``[]``）。系列名は全ソースで一意。
-        risk_models: ``{モデル名: RiskModelConfig}``（YAML ``risk_models``、既定 ``{}``）。
+        risk_models: ``{モデル名: RiskModelConfig | BarraRiskModelConfig}``（YAML ``risk_models``、
+            既定 ``{}``）。``source: barra`` と書いたものが ``BarraRiskModelConfig``。
         portfolios: 将来のポートフォリオ（Brinson・リスク分解の入力）のための予約枠
             （YAML ``portfolios``、既定 ``[]``）。現状は空でないとエラーになる。
         metrics: 実行する metric のリスト（YAML ``metrics``、既定 ``[]``）。
@@ -626,7 +756,7 @@ class EvaluationConfig(_Base):
     # ベンチマークウェイト（columns に asset_id と weight が必要）
     benchmark: Source | None = None
     returns: list[ReturnsSource] = Field(default_factory=list)
-    risk_models: dict[str, RiskModelConfig] = Field(default_factory=dict)
+    risk_models: dict[str, RiskModelSource] = Field(default_factory=dict)
     # 将来のポートフォリオ（Brinson・リスク分解の入力）のために枠だけ予約している
     portfolios: list[dict[str, Any]] = Field(default_factory=list)
     metrics: list[MetricEntry] = Field(default_factory=list)

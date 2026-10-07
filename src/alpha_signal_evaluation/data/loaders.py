@@ -338,17 +338,49 @@ def run_query(source: DBSource, params: dict[str, str], ctx: LoadContext) -> pd.
         ValueError: 接続先名が未知の場合。
     """
     sql = Path(source.query).read_text(encoding="utf-8")
-    key = ParquetCache.make_key(source.connection, sql, json.dumps(params, sort_keys=True))
+    return execute_cached(source.connection, sql, params, ctx, label=str(source.query))
+
+
+def execute_cached(
+    connection: str, sql: str, params: dict, ctx: LoadContext, label: str = ""
+) -> pd.DataFrame:
+    """SQL を実行して結果の DataFrame を返す（結果はキャッシュする）。
+
+    キャッシュのキーは「接続先名・SQL 本文・パラメータ」のハッシュ。``ctx.cache`` が
+    ``None`` ならキャッシュしない。キャッシュがあれば DB に問い合わせない。
+    キャッシュへの保存に失敗しても警告をログに出すだけで、評価は止めない。
+
+    Args:
+        connection: 接続先名（例: ``risk_models``）。
+        sql: 実行する SQL。パラメータは ``:name`` 形式で参照する。
+        params: バインドパラメータ（JSON に変換できる値）。
+        ctx: 読み込みコンテキスト（DB 接続とキャッシュ）。
+        label: ログに出すクエリの名前（SQL ファイルのパス等）。
+
+    Returns:
+        クエリ結果（列名は DB が返したまま）。
+
+    Raises:
+        ValueError: 接続先名が未知の場合。
+    """
+    key = ParquetCache.make_key(connection, sql, json.dumps(params, sort_keys=True))
     if ctx.cache is not None and (cached := ctx.cache.get(key)) is not None:
         return cached
-    logger.info("Querying %s (%s): %s", source.connection, source.query, params)
-    df = ctx.db(source.connection).execute(sql, params)
+    logger.info("Querying %s (%s): %s", connection, label, _short(params))
+    df = ctx.db(connection).execute(sql, params)
     if ctx.cache is not None:
         try:
             ctx.cache.put(key, df)
         except Exception as e:  # キャッシュの失敗で評価を止めない
             logger.warning("Failed to cache query result: %s", e)
     return df
+
+
+def _short(params: dict, limit: int = 6) -> str:
+    """ログ用にパラメータを短く表す（IN 句の銘柄リスト等で長くなりすぎないように）。"""
+    items = list(params.items())
+    text = ", ".join(f"{k}={v}" for k, v in items[:limit])
+    return text + (f", ... ({len(items)} params)" if len(items) > limit else "")
 
 
 def load_daily(

@@ -45,6 +45,8 @@ import numpy as np
 import pandas as pd
 
 from ..config import (
+    BarraReturnsSource,
+    BarraRiskModelConfig,
     ClassificationDBSource,
     ClassificationFileSource,
     Convention,
@@ -55,6 +57,7 @@ from ..config import (
     ReturnsDBSource,
     RiskModelConfig,
 )
+from ..data import barra
 from ..data.bundle import DataBundle, RiskModelData
 from ..data.calendar import Calendar, check_increasing, load_calendar
 from ..data.columns import ASSET_ID, CATEGORY, DATE, FACTOR, VALUE, WEIGHT
@@ -427,14 +430,49 @@ def _db_range(plan: EvaluationPlan, match_on: str) -> tuple[str, str]:
     return start, period_end_day(values.iloc[int(plan.ext_pos[-1])])
 
 
+def _period_boundaries(plan: EvaluationPlan, match_on: str) -> pd.Series:
+    """延長行の期間の境界日。index=延長行のキー（名前 ``date``）、values=8桁の日付。
+
+    ``match_on`` 列の値を ``period_end_day`` で日付にする（6 桁の月なら月末日が境界になり、
+    realized の期間はちょうどその月の初日〜月末日になる）。
+
+    Raises:
+        ValueError: ``match_on`` 列に空値・重複・非昇順がある場合。
+    """
+    rows = plan.ext_rows
+    boundaries = pd.Series(
+        rows[match_on].to_numpy(), index=pd.Index(rows[plan.calendar.index], name=DATE)
+    )
+    check_increasing(boundaries, match_on)
+    return boundaries.map(period_end_day)
+
+
+def _aggregate_daily(
+    daily: pd.DataFrame,
+    boundaries: pd.Series,
+    columns: str,
+    values: Mapping[str, tuple[str, str]],
+    convention: Convention,
+) -> dict[str, pd.DataFrame]:
+    """日次の long 形式を ``values`` の列ごとに wide にし、``to_period_returns`` で集約する。"""
+    daily_index = sorted(daily[DATE].unique())
+    return {
+        name: to_period_returns(
+            _to_wide(daily, columns, col, daily_index), boundaries, convention, method
+        )
+        for name, (col, method) in values.items()
+    }
+
+
 def _load_period_frames(
-    source: FileSource | DBSource,
+    source: FileSource | DBSource | BarraReturnsSource,
     plan: EvaluationPlan,
     ctx: LoadContext,
     columns: str,
     values: Mapping[str, str],
     required_roles: set[str],
     convention: Convention,
+    warnings: list[str] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """延長行の期間データを読み、values の各列を wide（行=延長行）に変換する。
 
@@ -444,6 +482,8 @@ def _load_period_frames(
       ``match_on`` 列の値を境界として ``to_period_returns`` で集約する。境界は
       ``period_end_day`` で日付にするため、6 桁の月なら月末日が境界になり、
       realized の期間はちょうどその月の初日〜月末日になる。
+    - BarraReturnsSource: DBSource と同じ範囲・境界で、``data.barra.load_returns_daily`` が
+      nri_code・小数に変換した日次データを集約する。
     - FileSource: 延長行についてスナップショットとして読み、そのまま wide にする。
       ファイルの値が既にその行の期間リターン（``convention`` に従う）である前提で、
       集約はしない（``values`` の集約方法は使わない）。評価期間外の行
@@ -457,6 +497,7 @@ def _load_period_frames(
         values: 出力名 -> ``(値の role 名, 集約方法)``。集約方法は ``compound`` / ``sum``。
         required_roles: ソースに必須の role 名。
         convention: DB の日次→期間集約で使う規約（``realized`` / ``forward``）。
+        warnings: 警告文を追記するリスト（Barra ソースで使う）。
 
     Returns:
         出力名 -> 期間データ。index=date（延長行のキー、延長行と同じ順序・同じ数）、
@@ -467,26 +508,16 @@ def _load_period_frames(
             (date, ``columns``) が重複する場合。
     """
     keys = plan.ext_keys
-    if isinstance(source, DBSource):
+    if isinstance(source, DBSource | BarraReturnsSource):
         start, end = _db_range(plan, source.match_on)
-        daily = load_daily(source, start, end, ctx, required_roles)
-        rows = plan.ext_rows
-        boundaries = pd.Series(
-            rows[source.match_on].to_numpy(), index=pd.Index(rows[plan.calendar.index], name=DATE)
-        )
-        check_increasing(boundaries, source.match_on)
-        # 月（6桁）の場合は月末日を境界にする → realized の期間はちょうどその月になる
-        boundaries = boundaries.map(period_end_day)
-        daily_index = sorted(daily[DATE].unique())
-        return {
-            name: to_period_returns(
-                _to_wide(daily, columns, col, daily_index),
-                boundaries,
-                convention,
-                method,
+        boundaries = _period_boundaries(plan, source.match_on)
+        if isinstance(source, BarraReturnsSource):
+            daily = barra.load_returns_daily(
+                source, start, end, boundaries.tolist(), ctx, [] if warnings is None else warnings
             )
-            for name, (col, method) in values.items()
-        }
+        else:
+            daily = load_daily(source, start, end, ctx, required_roles)
+        return _aggregate_daily(daily, boundaries, columns, values, convention)
     df = load_snapshot(source, plan.ext_rows, ctx, required_roles, plan.optional_keys)
     return {name: _to_wide(df, columns, col, keys) for name, (col, _) in values.items()}
 
@@ -585,14 +616,78 @@ def _load_classification(
     return category.rename(CATEGORY).to_frame().sort_index()
 
 
+def _load_barra_risk_model(
+    name: str,
+    model: BarraRiskModelConfig,
+    plan: EvaluationPlan,
+    ctx: LoadContext,
+    warnings: list[str],
+) -> RiskModelData:
+    """Barra のリスクモデル（``source: barra``）を読み、RiskModelData にまとめる。
+
+    - exposures / factor_covariance: 評価行ごとに、``match_on`` の日付（6桁の月なら月末日）
+      以前で最新の Barra のデータ（``data.barra``）。
+    - factor_returns: 延長行の範囲の日次ファクターリターンを ``match_on`` の境界で期間に
+      加算で集約し、``model.convention`` に従って加算のフォワードリターンにする
+      （``RiskModelConfig`` の DB ソースと同じ規則）。評価行に reindex する。
+
+    ``factor_groups`` は config で指定があればそれを、なければ ``{model}_FAC`` の FGROUP から
+    作ったもの（``FactorList.groups``）を使う。``specific_return`` が未設定なら警告する。
+
+    Args:
+        name: リスクモデル名（警告文に使う）。
+        model: Barra のリスクモデルの config。
+        plan: 評価計画。
+        ctx: 読み込みコンテキスト。
+        warnings: 警告文を追記するリスト。
+
+    Returns:
+        読み込んだ RiskModelData（``specific_risk`` は常に None）。
+    """
+    factors = barra.load_factor_list(model.model, ctx, warnings)
+    rows = plan.eval_rows
+    targets = dict(
+        zip(rows[plan.calendar.index], rows[model.match_on].map(period_end_day), strict=True)
+    )
+    exposures = factor_covariance = None
+    forward_factor = {}
+    if "exposures" in model.components:
+        exposures = barra.load_exposures(model.model, targets, factors, ctx, warnings)
+    if "factor_covariance" in model.components:
+        factor_covariance = barra.load_factor_covariance(
+            model.model, targets, factors, ctx, warnings
+        )
+    if "factor_returns" in model.components:
+        start, end = _db_range(plan, model.match_on)
+        boundaries = _period_boundaries(plan, model.match_on)
+        daily = barra.load_factor_returns_daily(model.model, start, end, factors, ctx, warnings)
+        (period,) = _aggregate_daily(
+            daily, boundaries, FACTOR, {"factor_returns": (VALUE, "sum")}, model.convention
+        ).values()
+        period = period[[f for f in factors.order if f in period.columns]]
+        fwd = forward_returns(period, plan.horizons, model.convention, "sum")
+        forward_factor = {h: f.reindex(plan.eval_index) for h, f in fwd.items()}
+    if model.specific_return is None:
+        warnings.append(f"risk_models.{name}.specific_return is not set")
+    return RiskModelData(
+        exposures=exposures,
+        factor_covariance=factor_covariance,
+        forward_factor_returns=forward_factor,
+        specific_return=model.specific_return,
+        factor_groups=model.factor_groups or factors.groups,
+    )
+
+
 def _load_risk_model(
     name: str,
-    model: RiskModelConfig,
+    model: RiskModelConfig | BarraRiskModelConfig,
     plan: EvaluationPlan,
     ctx: LoadContext,
     warnings: list[str],
 ) -> RiskModelData:
     """1つのリスクモデルの各コンポーネントを読み、RiskModelData にまとめる。
+
+    ``source: barra`` のモデルは ``_load_barra_risk_model`` に任せる。以下はそれ以外の場合。
 
     - exposures: 評価行のスナップショット。数値列だけをファクターとして残す
       （銘柄名などの文字列列は除く）。index=(date, asset_id)、columns=ファクター。
@@ -617,6 +712,8 @@ def _load_risk_model(
     Returns:
         読み込んだ RiskModelData。
     """
+    if isinstance(model, BarraRiskModelConfig):
+        return _load_barra_risk_model(name, model, plan, ctx, warnings)
     exposures = factor_covariance = specific_risk = None
     forward_factor = {}
     if model.exposures is not None:
@@ -762,6 +859,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                 },
                 required_roles=required,
                 convention=source.convention,
+                warnings=warnings,
             )
             for name, period in periods.items():
                 kind = source.series[name].kind

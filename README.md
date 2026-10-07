@@ -84,6 +84,35 @@ InformationCoefficient(method="pearson").compute(bundle)
   のように `:start` / `:end` を参照する（値はパイプラインが自動で渡す。リテラルのコロンは `\:`）。
 - 相対パスは config ファイルの場所を基準に解決される。
 
+### Barra（`source: barra`）
+
+社内 DB の Barra（`JPE4` / `GEMLT` / `GEM3`）は、SQL を書かずに `source: barra` で読める。
+接続先は `risk_models` と `fs_trfac_glb`（`.env` に両方の設定が必要）。
+
+```yaml
+returns:
+  - source: barra
+    model: JPE4
+    match_on: Trading_day          # 期間の境界（日次を期間に集約する）
+    currency: local                # USD なら トータルリターンを日次で USD 建てにする
+    series: {total: total, specific: specific}   # 省略時もこの2系列
+
+risk_models:
+  jpe4:
+    source: barra
+    model: JPE4
+    match_on: Trading_day          # スナップショットの日付と、ファクターリターンの期間の境界
+    components: [exposures, factor_covariance, factor_returns]   # 省略時は3つすべて
+    specific_return: specific
+```
+
+- 単位は読み込み時に揃える: DRTN / SRTN（1日あたりの %）→ 小数、ファクターリターンは小数のまま、
+  共分散（年率の %²）→ 年率の小数²。
+- 銘柄 ID は BID を `barraid_jp` で nri_code に変換する（`match_on` の日付ごとに、その日以前で最新の対応表）。
+- エクスポージャー・共分散は `match_on` の日付以前で最新の Barra の営業日のデータを使う。
+- ファクター名は `{model}_FAC` の FAC（`JPE4_` 等の接頭辞を除く）。`factor_groups` は省略すると FGROUP から作る
+  （`risk_indices` / `industries` 等。`risk_indices` は `style` としても使える）。
+
 ## 新しい metric を追加する
 
 notebook で試作してからパッケージに組み込むまでの手順は

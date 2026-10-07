@@ -31,6 +31,7 @@ cli → api → validation / pipeline → data → io
   `io/db` は社内ライブラリ namdb v0.1.2 の構成（`config.py` / `client.py` / `drivers/`）をそのまま取り込んでいる。
   接続先を足すときは `config.py` に Config を追加する（`connections.py` が DB 名で自動的に引けるようにする）。
 - `data/`: カレンダー、ColumnMap（role → 実カラム名）、ソースの読み込み（`loaders.py`）、`DataBundle`。
+  `barra.py` は `source: barra` の読み込み（SQL・単位の換算・BID → nri_code・USD 換算）。期間集約は preprocess が行う。
 - `pipeline/preprocess.py`: 期間集約・フォワードリターン・ユニバース適用・`DataBundle` の組み立て。
 - `pipeline/runner.py`: metrics の実行（並列時は `DataBundle` を initializer で1回だけ渡す）。失敗は metric 単位で隔離。
 - `metrics/`: `DataBundle` → `MetricResult` のみ。データ取得・出力をしない。`_` 始まりのモジュールは自動探索の対象外。
@@ -50,5 +51,6 @@ cli → api → validation / pipeline → data → io
 - metrics: `factor_exposure`, `residual_ic`, `spread_factor_regression`, `risk_decomposition`, `brinson`
 - `portfolios`（config では枠だけ予約。指定するとエラー）、ベンチマークウェイト
 - preprocess の整合チェック（トータル ≈ エクスポージャー × ファクターリターン + スペシフィック）
-- `factor_covariance` / `specific_risk` はソースの形式のまま読み込んでいる（.dat の具体的な形式が未確定）
+- `factor_covariance`（Barra 以外）/ `specific_risk` はソースの形式のまま読み込んでいる（.dat の具体的な形式が未確定）
+- Barra の `specific_risk`、`barraid_jp` にない（日本以外の）銘柄の扱い
 - `read_sql` の速度実測（遅ければ chunksize / connectorx）、`report/` の html 出力
