@@ -17,6 +17,7 @@
 """
 
 import argparse
+import socket
 import time
 from typing import get_args
 
@@ -28,6 +29,7 @@ from alpha_signal_evaluation import load_config
 from alpha_signal_evaluation.config import BarraModel, BarraReturnsSource
 from alpha_signal_evaluation.data import barra
 from alpha_signal_evaluation.data.loaders import LoadContext, execute_cached, period_end_day
+from alpha_signal_evaluation.io.db import get_connection_config, missing_settings
 from alpha_signal_evaluation.pipeline.preprocess import build_bundle
 
 MODELS = list(get_args(BarraModel))
@@ -50,26 +52,70 @@ def show(title: str, body) -> None:
 # ---------------------------------------------------------------------------
 
 
+def probe(connection: str, sql: str, timeout: float = 5.0) -> bool:
+    """1つの接続先を、設定 → 名前解決 → TCP 接続（IP ごと）→ クエリの順に確かめる。
+
+    どこで止まるかを表示する（例外は送出しない）。パスワードは表示しない。
+
+    Returns:
+        クエリまで成功したら True。
+    """
+    config = get_connection_config(connection)
+    print(f"\n=== {connection}（{type(config).__name__}） ===")
+    print(f"設定: host={config.host!r} port={config.port} db={config.db!r}")
+    missing = missing_settings(config)
+    if missing:
+        print(f"NG: 環境変数が未設定: {', '.join(missing)}（.env を確認）")
+        return False
+
+    try:
+        infos = socket.getaddrinfo(config.host, config.port, type=socket.SOCK_STREAM)
+    except OSError as e:
+        print(f"NG: ホスト名を解決できない: {e}")
+        return False
+    addresses = sorted({info[4][0] for info in infos})
+    reachable = []
+    for address in addresses:
+        try:
+            socket.create_connection((address, config.port), timeout=timeout).close()
+            reachable.append(address)
+            print(f"  TCP {address}:{config.port} 接続できる")
+        except OSError as e:
+            print(f"  TCP {address}:{config.port} 接続できない（{e}）")
+    if not reachable:
+        print(
+            "NG: どの IP にも TCP で接続できない。このマシンからそのポートへの通信が"
+            "許可されていない（ファイアウォール・ネットワーク設定）可能性が高い"
+        )
+        return False
+    if len(reachable) < len(addresses) and config.server_type == "sqlserver":
+        print(
+            "注意: 一部の IP にだけ接続できる。SQL Server の可用性グループのリスナーなら、"
+            "ODBC に MultiSubnetFailover=Yes が必要な場合がある"
+        )
+
+    try:
+        with LoadContext(calendar=None) as ctx:
+            show("クエリ結果", query(ctx, connection, sql))
+    except Exception as e:
+        print(f"NG: TCP は通るがクエリに失敗: {type(e).__name__}: {str(e).splitlines()[0]}")
+        return False
+    print("OK")
+    return True
+
+
 def check_connection(model: str) -> None:
-    """両方の接続先から数行ずつ読む。"""
-    with LoadContext(calendar=None) as ctx:
-        show(
-            f"{barra.BARRA_DB}: {model}_FAC",
-            query(
-                ctx,
-                barra.BARRA_DB,
-                f"SELECT TOP 5 FCD, FGROUP, FAC, MDL FROM RISK_MODELS.dbo.{model}_FAC",
-            ),
-        )
-        show(
-            f"{barra.ID_MAP_DB}: barraid_jp",
-            query(
-                ctx,
-                barra.ID_MAP_DB,
-                "SELECT date, nri_code, bid FROM public.barraid_jp ORDER BY date DESC LIMIT 5",
-            ),
-        )
-    print("\nOK: 両方の接続先から読めた")
+    """両方の接続先から数行ずつ読む（片方が失敗してももう片方を確かめる）。"""
+    results = [
+        probe(
+            barra.BARRA_DB, f"SELECT TOP 5 FCD, FGROUP, FAC, MDL FROM RISK_MODELS.dbo.{model}_FAC"
+        ),
+        probe(
+            barra.ID_MAP_DB,
+            "SELECT date, nri_code, bid FROM public.barraid_jp ORDER BY date DESC LIMIT 5",
+        ),
+    ]
+    print("\nOK: 両方の接続先から読めた" if all(results) else "\nNG: 読めない接続先がある")
 
 
 # ---------------------------------------------------------------------------
