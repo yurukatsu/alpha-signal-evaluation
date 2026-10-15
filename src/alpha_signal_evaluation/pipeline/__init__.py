@@ -9,7 +9,6 @@ io / data（読み込み）を使い、api から呼ばれる。report は runne
 """
 
 from .preprocess import (
-    PERIOD_AGGREGATION,
     EvaluationPlan,
     PreparedData,
     build_bundle,
@@ -21,7 +20,6 @@ from .preprocess import (
 from .runner import MetricRun, run_metrics
 
 __all__ = [
-    "PERIOD_AGGREGATION",
     "EvaluationPlan",
     "MetricRun",
     "PreparedData",

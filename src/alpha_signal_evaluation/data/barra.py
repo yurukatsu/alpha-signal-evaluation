@@ -45,7 +45,8 @@ import pandas as pd
 
 from ..config import BarraModel, BarraReturnsSource
 from .columns import ASSET_ID, DATE, FACTOR, VALUE
-from .loaders import LoadContext, execute_cached, shift_day, to_asset_id, to_date_key
+from .keys import shift_day, to_asset_id, to_date_key
+from .loaders import LoadContext, execute_cached
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +260,18 @@ def resolve_asof(
     return out
 
 
+def _resolve_trading_dates(
+    model: str, targets: Iterable[str], ctx: LoadContext, warnings: list[str]
+) -> dict[str, str]:
+    """各目標日について、その日以前で最新の Barra の営業日を選ぶ（``resolve_asof``）。
+
+    Returns:
+        目標日 -> 使う Barra の営業日。対応する営業日がない目標日は含まない。
+    """
+    targets = sorted(set(targets))
+    return resolve_asof(_trading_dates(model, targets, ctx), targets, f"{model} data", warnings)
+
+
 def _trading_dates(model: str, targets: Iterable[str], ctx: LoadContext) -> list[str]:
     """最初の目標日の ``ASOF_LOOKBACK_DAYS`` 日前〜最後の目標日の Barra の営業日（8桁）。"""
     targets = sorted(set(targets))
@@ -304,11 +317,7 @@ def load_factor_list(model: str, ctx: LoadContext, warnings: list[str]) -> Facto
             "mdl": df["mdl"].astype(str).str.strip(),
         }
     )
-    prefix = df["mdl"] + "_"
-    has_prefix = [f.startswith(p) for f, p in zip(df["fac"], prefix, strict=True)]
-    df["name"] = [
-        f[len(p) :] if ok else f for f, p, ok in zip(df["fac"], prefix, has_prefix, strict=True)
-    ]
+    df["name"] = [f.removeprefix(f"{m}_") for f, m in zip(df["fac"], df["mdl"], strict=True)]
     dup = df["name"].duplicated(keep=False)
     if dup.any():
         warnings.append(
@@ -621,9 +630,7 @@ def load_exposures(
     Returns:
         index=(date, asset_id)（ソート済み）、columns=ファクター名（一覧の順）の DataFrame。
     """
-    resolved = resolve_asof(
-        _trading_dates(model, targets.values(), ctx), targets.values(), f"{model} data", warnings
-    )
+    resolved = _resolve_trading_dates(model, targets.values(), ctx, warnings)
     id_map = load_id_map(targets.values(), ctx, warnings)
     df = _run_in(
         ctx,
@@ -679,9 +686,7 @@ def load_factor_covariance(
         index=(date, factor)、columns=ファクター名の DataFrame（日付ごとに正方行列を
         縦に積んだもの）。行・列ともファクター一覧の順。
     """
-    resolved = resolve_asof(
-        _trading_dates(model, targets.values(), ctx), targets.values(), f"{model} data", warnings
-    )
+    resolved = _resolve_trading_dates(model, targets.values(), ctx, warnings)
     df = _run_in(
         ctx,
         BARRA_DB,

@@ -24,22 +24,17 @@
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Literal, TypeAlias
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..config import ReturnKind
+from ..config import AGGREGATION_BY_KIND, Aggregation, ReturnKind
 from ..data.bundle import REQUIREMENTS, DataBundle, DataSpec
 
-CumulativeMethod: TypeAlias = Literal["compound", "sum"]
-
-# 期間をまたぐ累積のデフォルト。params で変更できる
-CUMULATIVE_DEFAULT: dict[ReturnKind, CumulativeMethod] = {
-    "total": "compound",
-    "specific": "sum",
-}
+# 期間をまたぐ累積のデフォルト（kind ごとの束ね方と同じ）。params で変更できる
+CUMULATIVE_DEFAULT: dict[ReturnKind, Aggregation] = dict(AGGREGATION_BY_KIND)
 
 
 class MetricParams(BaseModel):
@@ -95,7 +90,7 @@ class ReturnAggregation(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    cumulative: dict[ReturnKind, CumulativeMethod] = Field(
+    cumulative: dict[ReturnKind, Aggregation] = Field(
         default_factory=lambda: dict(CUMULATIVE_DEFAULT)
     )
 

@@ -4,14 +4,12 @@
 （シグナルの持続性・回転の目安）を、自己相関と偏自己相関で測る。
 """
 
-from typing import Literal
-
 import numpy as np
 import pandas as pd
 from pydantic import Field, field_validator
 
 from ..data.bundle import DataBundle
-from ._common import concat
+from ._common import CorrMethod, concat
 from .base import Metric, MetricParams, MetricResult
 from .registry import register_metric
 
@@ -33,7 +31,7 @@ class AutocorrParams(MetricParams):
 
     signals: list[str] | None = None
     lags: list[int] = Field(default_factory=lambda: [1, 2, 3, 6, 12])
-    method: Literal["spearman", "pearson"] = "spearman"
+    method: CorrMethod = "spearman"
     min_obs: int = Field(default=10, ge=3)
 
     @field_validator("lags")
@@ -55,7 +53,9 @@ class AutocorrParams(MetricParams):
         return sorted(set(v))
 
 
-def _rowwise_corr(a: pd.DataFrame, b: pd.DataFrame, method: str, min_obs: int) -> pd.DataFrame:
+def _rowwise_corr(
+    a: pd.DataFrame, b: pd.DataFrame, method: CorrMethod, min_obs: int
+) -> pd.DataFrame:
     """同じ行（日付）同士の銘柄方向の相関を求める。
 
     行ごとに ``a`` と ``b`` の両方が欠損でない銘柄だけを使う。``method="spearman"`` は
