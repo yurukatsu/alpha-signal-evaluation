@@ -18,8 +18,8 @@ metrics 側では一切時点をずらさない。loaders（``data/loaders.py``�
         ``realized`` は「行 t-1 → 行 t」の実現リターン（デフォルト）、
         ``forward`` は「行 t → 行 t+1」のリターン。
     集約方法: 複数の日次・期間のリターンを束ねる方法。``total`` は複利
-        （compound）、``specific`` は加算（sum）で、``PERIOD_AGGREGATION`` により
-        kind から固定で決まる。ファクターリターンは常に加算。
+        （compound）、``specific`` は加算（sum）で、``config.AGGREGATION_BY_KIND`` により
+        kind から固定で決まる（ユーザーには選ばせない）。ファクターリターンは常に加算。
 
 処理の流れ（``build_bundle``）:
     1. カレンダーを読み、``make_plan`` で評価行と延長行を決める。
@@ -45,6 +45,8 @@ import numpy as np
 import pandas as pd
 
 from ..config import (
+    AGGREGATION_BY_KIND,
+    Aggregation,
     BarraReturnsSource,
     BarraRiskModelConfig,
     ClassificationDBSource,
@@ -61,21 +63,11 @@ from ..data import barra
 from ..data.bundle import DataBundle, RiskModelData
 from ..data.calendar import Calendar, check_increasing, load_calendar
 from ..data.columns import ASSET_ID, CATEGORY, DATE, FACTOR, VALUE, WEIGHT
-from ..data.loaders import (
-    LoadContext,
-    describe_source,
-    load_daily,
-    load_snapshot,
-    period_end_day,
-    period_start_day,
-    shift_day,
-)
+from ..data.keys import period_end_day, period_start_day, shift_day
+from ..data.loaders import LoadContext, describe_source, load_daily, load_snapshot
 from ..io.cache import ParquetCache
 
 logger = logging.getLogger(__name__)
-
-# 期間内（日次→期間）の集約。kind から固定で決まり、ユーザーには選ばせない
-PERIOD_AGGREGATION: dict[ReturnKind, str] = {"total": "compound", "specific": "sum"}
 
 
 # ---------------------------------------------------------------------------
@@ -250,7 +242,7 @@ def to_period_returns(
     daily: pd.DataFrame,
     boundaries: pd.Series,
     convention: Convention,
-    method: str,
+    method: Aggregation,
 ) -> pd.DataFrame:
     """日次リターン（index=yyyymmdd, wide）をカレンダー期間に集約する。
 
@@ -325,7 +317,7 @@ def forward_returns(
     period_ret: pd.DataFrame,
     horizons: list[int],
     convention: Convention,
-    method: str,
+    method: Aggregation,
 ) -> dict[int, pd.DataFrame]:
     """期間リターン（行=カレンダー行、欠けのない連続した行）からフォワードリターンを計算する。
 
@@ -464,12 +456,30 @@ def _aggregate_daily(
     }
 
 
+def _forward_on_eval_rows(
+    period: pd.DataFrame, plan: EvaluationPlan, convention: Convention, method: Aggregation
+) -> dict[int, pd.DataFrame]:
+    """延長行の期間リターンをホライズンごとのフォワードリターンにし、評価行に reindex する。
+
+    Args:
+        period: 期間リターン（index=延長行のキー、欠けのない連続した行）。
+        plan: 評価計画（ホライズンと評価行を使う）。
+        convention: ``period`` の規約。
+        method: 束ね方（``compound`` / ``sum``）。
+
+    Returns:
+        ホライズン -> フォワードリターン（index=評価行のキー、columns は ``period`` と同じ）。
+    """
+    fwd = forward_returns(period, plan.horizons, convention, method)
+    return {h: f.reindex(plan.eval_index) for h, f in fwd.items()}
+
+
 def _load_period_frames(
     source: FileSource | DBSource | BarraReturnsSource,
     plan: EvaluationPlan,
     ctx: LoadContext,
     columns: str,
-    values: Mapping[str, str],
+    values: Mapping[str, tuple[str, Aggregation]],
     required_roles: set[str],
     convention: Convention,
     warnings: list[str] | None = None,
@@ -617,7 +627,6 @@ def _load_classification(
 
 
 def _load_barra_risk_model(
-    name: str,
     model: BarraRiskModelConfig,
     plan: EvaluationPlan,
     ctx: LoadContext,
@@ -632,10 +641,9 @@ def _load_barra_risk_model(
       （``RiskModelConfig`` の DB ソースと同じ規則）。評価行に reindex する。
 
     ``factor_groups`` は config で指定があればそれを、なければ ``{model}_FAC`` の FGROUP から
-    作ったもの（``FactorList.groups``）を使う。``specific_return`` が未設定なら警告する。
+    作ったもの（``FactorList.groups``）を使う。
 
     Args:
-        name: リスクモデル名（警告文に使う）。
         model: Barra のリスクモデルの config。
         plan: 評価計画。
         ctx: 読み込みコンテキスト。
@@ -661,14 +669,10 @@ def _load_barra_risk_model(
         start, end = _db_range(plan, model.match_on)
         boundaries = _period_boundaries(plan, model.match_on)
         daily = barra.load_factor_returns_daily(model.model, start, end, factors, ctx, warnings)
-        (period,) = _aggregate_daily(
-            daily, boundaries, FACTOR, {"factor_returns": (VALUE, "sum")}, model.convention
-        ).values()
+        values = {FACTOR: (VALUE, "sum")}
+        period = _aggregate_daily(daily, boundaries, FACTOR, values, model.convention)[FACTOR]
         period = period[[f for f in factors.order if f in period.columns]]
-        fwd = forward_returns(period, plan.horizons, model.convention, "sum")
-        forward_factor = {h: f.reindex(plan.eval_index) for h, f in fwd.items()}
-    if model.specific_return is None:
-        warnings.append(f"risk_models.{name}.specific_return is not set")
+        forward_factor = _forward_on_eval_rows(period, plan, model.convention, "sum")
     return RiskModelData(
         exposures=exposures,
         factor_covariance=factor_covariance,
@@ -678,16 +682,10 @@ def _load_barra_risk_model(
     )
 
 
-def _load_risk_model(
-    name: str,
-    model: RiskModelConfig | BarraRiskModelConfig,
-    plan: EvaluationPlan,
-    ctx: LoadContext,
-    warnings: list[str],
+def _load_custom_risk_model(
+    model: RiskModelConfig, plan: EvaluationPlan, ctx: LoadContext
 ) -> RiskModelData:
-    """1つのリスクモデルの各コンポーネントを読み、RiskModelData にまとめる。
-
-    ``source: barra`` のモデルは ``_load_barra_risk_model`` に任せる。以下はそれ以外の場合。
+    """``source: barra`` 以外のリスクモデルの各コンポーネントを読み、RiskModelData にまとめる。
 
     - exposures: 評価行のスナップショット。数値列だけをファクターとして残す
       （銘柄名などの文字列列は除く）。index=(date, asset_id)、columns=ファクター。
@@ -699,21 +697,15 @@ def _load_risk_model(
       reindex して ``forward_factor_returns[h]`` に入れる。
 
     config で未設定のコンポーネントは None（factor_returns は空 dict）のまま。
-    ``specific_return`` が未設定なら ``warnings`` に警告文を追記する
-    （引数のリストをその場で変更する）。
 
     Args:
-        name: リスクモデル名（警告文に使う）。
         model: リスクモデルの config。
         plan: 評価計画。
         ctx: 読み込みコンテキスト。
-        warnings: 警告文を追記するリスト。
 
     Returns:
         読み込んだ RiskModelData。
     """
-    if isinstance(model, BarraRiskModelConfig):
-        return _load_barra_risk_model(name, model, plan, ctx, warnings)
     exposures = factor_covariance = specific_risk = None
     forward_factor = {}
     if model.exposures is not None:
@@ -728,19 +720,16 @@ def _load_risk_model(
     if model.factor_returns is not None:
         source = model.factor_returns
         # ファクターリターンは「日付×ファクター」。日次→期間の集約は加算
-        (period,) = _load_period_frames(
+        period = _load_period_frames(
             source,
             plan,
             ctx,
             columns=FACTOR,
-            values={"factor_returns": (VALUE, "sum")},
+            values={FACTOR: (VALUE, "sum")},
             required_roles={FACTOR, VALUE},
             convention=source.convention,
-        ).values()
-        fwd = forward_returns(period, plan.horizons, source.convention, "sum")
-        forward_factor = {h: f.reindex(plan.eval_index) for h, f in fwd.items()}
-    if model.specific_return is None:
-        warnings.append(f"risk_models.{name}.specific_return is not set")
+        )[FACTOR]
+        forward_factor = _forward_on_eval_rows(period, plan, source.convention, "sum")
     return RiskModelData(
         exposures=exposures,
         factor_covariance=factor_covariance,
@@ -749,6 +738,38 @@ def _load_risk_model(
         specific_return=model.specific_return,
         factor_groups=model.factor_groups,
     )
+
+
+def _load_risk_model(
+    name: str,
+    model: RiskModelConfig | BarraRiskModelConfig,
+    plan: EvaluationPlan,
+    ctx: LoadContext,
+    warnings: list[str],
+) -> RiskModelData:
+    """1つのリスクモデルを読み、RiskModelData にまとめる。
+
+    ``source: barra`` のモデルは ``_load_barra_risk_model``、それ以外は
+    ``_load_custom_risk_model`` が読む。``specific_return`` が未設定なら ``warnings`` に
+    警告文を追記する（引数のリストをその場で変更する）。
+
+    Args:
+        name: リスクモデル名（警告文に使う）。
+        model: リスクモデルの config。
+        plan: 評価計画。
+        ctx: 読み込みコンテキスト。
+        warnings: 警告文を追記するリスト。
+
+    Returns:
+        読み込んだ RiskModelData。
+    """
+    if isinstance(model, BarraRiskModelConfig):
+        data = _load_barra_risk_model(model, plan, ctx, warnings)
+    else:
+        data = _load_custom_risk_model(model, plan, ctx)
+    if model.specific_return is None:
+        warnings.append(f"risk_models.{name}.specific_return is not set")
+    return data
 
 
 def _coverage_warnings(
@@ -798,7 +819,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
          （ユニバースのウェイトより優先）。
        - 分類（任意）: 評価行。
        - リターン: ソースごとに延長行の期間リターンを読み、系列ごとに kind に応じた
-         集約方法（``PERIOD_AGGREGATION``）とソースの convention でフォワードリターンに
+         集約方法（``AGGREGATION_BY_KIND``）とソースの convention でフォワードリターンに
          して、評価行に reindex する。
        - リスクモデル: ``_load_risk_model``。
 
@@ -854,7 +875,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                 ctx,
                 columns=ASSET_ID,
                 values={
-                    name: (s.column, PERIOD_AGGREGATION[s.kind])
+                    name: (s.column, AGGREGATION_BY_KIND[s.kind])
                     for name, s in source.series.items()
                 },
                 required_roles=required,
@@ -862,11 +883,8 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                 warnings=warnings,
             )
             for name, period in periods.items():
-                kind = source.series[name].kind
-                by_h = forward_returns(
-                    period, plan.horizons, source.convention, PERIOD_AGGREGATION[kind]
-                )
-                fwd[name] = {h: f.reindex(plan.eval_index) for h, f in by_h.items()}
+                method = AGGREGATION_BY_KIND[source.series[name].kind]
+                fwd[name] = _forward_on_eval_rows(period, plan, source.convention, method)
 
         risk_models = {
             name: _load_risk_model(name, model, plan, ctx, warnings)
@@ -904,7 +922,7 @@ def make_bundle(
     カレンダーファイルや config の data セクションを使わず、既に期間リターンに
     なっている DataFrame から ``forward_returns`` でフォワードリターンを計算する。
     時点合わせの規則は ``build_bundle`` と同じで、集約方法は ``return_kinds`` から
-    ``PERIOD_AGGREGATION`` で決まる（total は複利、specific は加算）。
+    ``AGGREGATION_BY_KIND`` で決まる（total は複利、specific は加算）。
 
     ``period_returns`` は index でソートしてから行の位置でずらすため、行は欠けのない
     連続したカレンダー行でなければならない（連続性は検査しない）。評価行の後ろに
@@ -968,7 +986,7 @@ def make_bundle(
             period.sort_index(),
             horizons,
             convention,
-            PERIOD_AGGREGATION[return_kinds[name]],
+            AGGREGATION_BY_KIND[return_kinds[name]],
         )
         fwd[name] = {}
         for h, f in by_h.items():

@@ -261,11 +261,10 @@ def _check_source(
 ) -> list[str]:
     """1つのデータソースの設定をカレンダーと照らして検証する（ファイルの存在は見ない）。
 
-    共通: ``match_on``（省略時は ``calendar.index``）がカレンダーの列であること。
-    ファイル: パスのプレースホルダがカレンダーの列であること、拡張子が対応していること。
-    DB: 接続先名が既知であること、SQL ファイルが存在すること、``match_on`` 列の値が
-    すべて日付（8桁）または月（6桁）であること。期間データで ``plan`` があれば、
-    延長行の範囲で ``match_on`` 列が重複なしの昇順であること（期間の境界に使うため）。
+    ファイル: ``match_on``（省略時は ``calendar.index``）とパスのプレースホルダが
+    カレンダーの列であること、拡張子が対応していること。
+    DB: 接続先名が既知であること、SQL ファイルが存在すること、``match_on`` が
+    ``_check_date_column`` の条件を満たすこと。
 
     Args:
         label: エラーメッセージに使う config 上の位置。
@@ -278,13 +277,11 @@ def _check_source(
         エラーメッセージのリスト。
     """
     errors = []
-    columns = set(calendar.columns)
     match_on = source.match_on or calendar.index
-    if match_on not in columns:
-        errors.append(f"{label}.match_on: calendar has no column {match_on!r}")
-
     if isinstance(source, FileSource):
-        missing = source.placeholders - columns
+        if match_on not in calendar.columns:
+            errors.append(f"{label}.match_on: calendar has no column {match_on!r}")
+        missing = source.placeholders - set(calendar.columns)
         if missing:
             errors.append(
                 f"{label}.path: placeholders {sorted(missing)} are not calendar columns "
@@ -305,9 +302,7 @@ def _check_source(
         )
     if not Path(source.query).is_file():
         errors.append(f"{label}.query: file not found: {source.query}")
-    if match_on in columns:
-        errors += _check_date_column(label, match_on, is_period, calendar, plan)
-    return errors
+    return errors + _check_date_column(label, match_on, is_period, calendar, plan)
 
 
 def _check_date_column(
@@ -317,14 +312,16 @@ def _check_date_column(
     calendar: Calendar,
     plan: EvaluationPlan | None,
 ) -> list[str]:
-    """DB・Barra のソースの ``match_on`` 列（カレンダーにある列）の値を検証する。
+    """DB・Barra のソースの ``match_on`` 列を検証する。
 
-    値がすべて日付（8桁）または月（6桁）であること。期間データで ``plan`` があれば、
-    延長行の範囲で重複なしの昇順であること（期間の境界に使うため）。
+    カレンダーの列であり、値がすべて日付（8桁）または月（6桁）であること。期間データで
+    ``plan`` があれば、延長行の範囲で重複なしの昇順であること（期間の境界に使うため）。
 
     Returns:
-        エラーメッセージのリスト。
+        エラーメッセージのリスト（最初に見つかった問題の1件だけ）。
     """
+    if match_on not in calendar.columns:
+        return [f"{label}.match_on: calendar has no column {match_on!r}"]
     values = calendar.frame[match_on]
     if not values.str.fullmatch(_DATE_OR_MONTH.pattern).fillna(False).all():
         return [
@@ -354,23 +351,6 @@ def _iter_barra(cfg: EvaluationConfig) -> Iterator[tuple[str, str, bool]]:
     for name, model in cfg.risk_models.items():
         if isinstance(model, BarraRiskModelConfig):
             yield f"risk_models.{name}", model.match_on, "factor_returns" in model.components
-
-
-def _check_barra(
-    label: str,
-    match_on: str,
-    is_period: bool,
-    calendar: Calendar,
-    plan: EvaluationPlan | None,
-) -> list[str]:
-    """Barra のソースの ``match_on`` がカレンダーの日付・月の列であることを検証する。
-
-    Returns:
-        エラーメッセージのリスト。
-    """
-    if match_on not in calendar.columns:
-        return [f"{label}.match_on: calendar has no column {match_on!r}"]
-    return _check_date_column(label, match_on, is_period, calendar, plan)
 
 
 def _missing_files(
@@ -478,7 +458,7 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
         for label, source, is_period in _iter_sources(cfg):
             report.errors += _check_source(label, source, is_period, calendar, plan)
         for label, match_on, is_period in _iter_barra(cfg):
-            report.errors += _check_barra(label, match_on, is_period, calendar, plan)
+            report.errors += _check_date_column(label, match_on, is_period, calendar, plan)
 
     report.errors += _check_connections(cfg)
     report.errors += validate_metrics(cfg.enabled_metrics, spec_from_config(cfg))

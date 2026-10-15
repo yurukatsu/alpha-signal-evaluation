@@ -39,6 +39,12 @@ from pydantic import (
 ReturnKind: TypeAlias = Literal["total", "specific"]
 Convention: TypeAlias = Literal["realized", "forward"]
 OutputFormat: TypeAlias = Literal["parquet", "xlsx", "csv"]
+# 複数期間のリターンの束ね方。compound は複利、sum は加算
+Aggregation: TypeAlias = Literal["compound", "sum"]
+
+# kind ごとの束ね方（total は複利、specific は加算）。期間への集約・フォワードリターン
+# （preprocess）、1期間あたりへの換算と累積リターンの既定値（metrics）で共通に使う
+AGGREGATION_BY_KIND: dict[ReturnKind, Aggregation] = {"total": "compound", "specific": "sum"}
 
 
 def _resolve_path(value: str, info: ValidationInfo) -> str:
@@ -104,6 +110,11 @@ def template_fields(template: str) -> set[str]:
         ['Base_day', 'Rskmdl_month']
     """
     return {name for _, name, _, _ in string.Formatter().parse(template) if name}
+
+
+def _duplicates(items: list[str]) -> list[str]:
+    """2回以上現れる要素を重複なしで昇順に返す（重複がなければ空リスト）。"""
+    return sorted({x for x in items if items.count(x) > 1})
 
 
 class _Base(BaseModel):
@@ -523,8 +534,7 @@ class DataConfig(_Base):
         Raises:
             ValueError: 同じシグナル名が複数回定義されている場合。
         """
-        names = self.signal_names
-        dup = sorted({n for n in names if names.count(n) > 1})
+        dup = _duplicates(self.signal_names)
         if dup:
             raise ValueError(f"Duplicate signal names across sources: {dup}")
         return self
@@ -803,15 +813,14 @@ class EvaluationConfig(_Base):
         Raises:
             ValueError: 上記のいずれかに違反した場合。
         """
-        keys = [m.key for m in self.metrics]
-        dup = sorted({k for k in keys if keys.count(k) > 1})
+        dup = _duplicates([m.key for m in self.metrics])
         if dup:
             raise ValueError(
                 f"Duplicate metric keys: {dup}. Set a unique `id` when using the same metric twice"
             )
 
         names = [n for r in self.returns for n in r.series]
-        dup = sorted({n for n in names if names.count(n) > 1})
+        dup = _duplicates(names)
         if dup:
             raise ValueError(f"Duplicate return series names across sources: {dup}")
 

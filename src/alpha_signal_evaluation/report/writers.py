@@ -47,6 +47,14 @@ def _has_index(table: pd.DataFrame) -> bool:
     return not isinstance(table.index, pd.RangeIndex)
 
 
+def _write_table(table: pd.DataFrame, path: Path, fmt: str, index: bool) -> None:
+    """1つのテーブルを parquet、または csv（UTF-8、BOM 付き）で ``path`` に書く。"""
+    if fmt == "parquet":
+        table.to_parquet(path, index=index)
+    else:
+        table.to_csv(path, index=index, encoding=_CSV_ENCODING)
+
+
 def _write_files(report: "EvaluationReport", directory: Path, fmt: str) -> None:
     """各テーブルと summary を parquet または csv のファイルに書く。
 
@@ -57,15 +65,8 @@ def _write_files(report: "EvaluationReport", directory: Path, fmt: str) -> None:
     for key, name, table in _tables(report):
         path = directory / key / f"{name}.{fmt}"
         path.parent.mkdir(parents=True, exist_ok=True)
-        if fmt == "parquet":
-            table.to_parquet(path, index=_has_index(table))
-        else:
-            table.to_csv(path, index=_has_index(table), encoding=_CSV_ENCODING)
-    summary = report.summary()
-    if fmt == "parquet":
-        summary.to_parquet(directory / "summary.parquet", index=False)
-    else:
-        summary.to_csv(directory / "summary.csv", index=False, encoding=_CSV_ENCODING)
+        _write_table(table, path, fmt, index=_has_index(table))
+    _write_table(report.summary(), directory / f"summary.{fmt}", fmt, index=False)
 
 
 def _sheet_name(key: str, name: str, used: set[str]) -> str:
