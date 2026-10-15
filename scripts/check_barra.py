@@ -28,7 +28,8 @@ from dotenv import load_dotenv
 from alpha_signal_evaluation import load_config
 from alpha_signal_evaluation.config import BarraModel, BarraReturnsSource
 from alpha_signal_evaluation.data import barra
-from alpha_signal_evaluation.data.loaders import LoadContext, execute_cached, period_end_day
+from alpha_signal_evaluation.data.keys import period_end_day
+from alpha_signal_evaluation.data.loaders import LoadContext, execute_cached
 from alpha_signal_evaluation.io.db import get_connection_config, missing_settings
 from alpha_signal_evaluation.pipeline.preprocess import build_bundle
 
