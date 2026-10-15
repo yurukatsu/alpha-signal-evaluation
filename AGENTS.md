@@ -30,7 +30,8 @@ cli → api → validation / pipeline → data → io
 - `io/`: 物理的な入出力（ファイル読み込み、DB、キャッシュ）。`data/` の型を知らない。
   `io/db` は社内ライブラリ namdb v0.1.2 の構成（`config.py` / `client.py` / `drivers/`）をそのまま取り込んでいる。
   接続先を足すときは `config.py` に Config を追加する（`connections.py` が DB 名で自動的に引けるようにする）。
-- `data/`: カレンダー、ColumnMap（role → 実カラム名）、ソースの読み込み（`loaders.py`）、`DataBundle`。
+- `data/`: カレンダー、ColumnMap（role → 実カラム名）、日付キー・銘柄コードの正規化（`keys.py`）、
+  ソースの読み込み（`loaders.py`）、`DataBundle`。
   `barra.py` は `source: barra` の読み込み（SQL・単位の換算・BID → nri_code・USD 換算）。期間集約は preprocess が行う。
 - `pipeline/preprocess.py`: 期間集約・フォワードリターン・ユニバース適用・`DataBundle` の組み立て。
 - `pipeline/runner.py`: metrics の実行（並列時は `DataBundle` を initializer で1回だけ渡す）。失敗は metric 単位で隔離。
@@ -44,6 +45,7 @@ cli → api → validation / pipeline → data → io
 - metric のパラメータは `MetricParams`（pydantic）で定義し、全項目にデフォルト値を持たせる。
   signals / returns / horizons を持つ場合は `SignalReturnParams` を継承すると存在チェックが自動で入る。
 - 期間をまたぐリターン集計は `ReturnAggregation`（算術平均と幾何平均を両方出す、累積は kind ごとに選択可）。
+  kind ごとの束ね方（total は複利、specific は加算）は `config.AGGREGATION_BY_KIND` の1か所で定義する。
 - 型エイリアスは `TypeAlias` で書く。コメント・docstring は日本語。
 
 ## 未実装・未決事項

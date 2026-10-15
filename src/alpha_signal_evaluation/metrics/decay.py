@@ -4,24 +4,22 @@
 1つの表にまとめる。
 """
 
-from typing import Literal
-
 import pandas as pd
 from pydantic import Field
 
+from ..config import AGGREGATION_BY_KIND
 from ..data.bundle import DataBundle
 from ..data.columns import DATE
 from ._common import (
+    CorrMethod,
     assign_quantiles,
     cross_sectional_corr,
+    flatten_summary,
     per_period_rate,
     summarize_series,
 )
 from .base import Metric, MetricResult, SignalReturnParams
 from .registry import register_metric
-
-# 期間内の集約（kind から固定）。h 期間のリターンを1期間あたりに換算するのに使う
-_PER_PERIOD = {"total": "compound", "specific": "sum"}
 
 
 class AlphaDecayParams(SignalReturnParams):
@@ -41,7 +39,7 @@ class AlphaDecayParams(SignalReturnParams):
             割り当てられる）。
     """
 
-    method: Literal["spearman", "pearson"] = "spearman"
+    method: CorrMethod = "spearman"
     n_quantiles: int = Field(default=5, ge=2)
     min_obs: int = Field(default=10, ge=3)
 
@@ -96,7 +94,7 @@ class AlphaDecay(Metric):
         rows = []
         for signal in data.resolve_signals(p.signals):
             for ret in data.resolve_returns(p.returns):
-                method = _PER_PERIOD[data.return_kinds[ret]]
+                method = AGGREGATION_BY_KIND[data.return_kinds[ret]]
                 for h in data.resolve_horizons(p.horizons):
                     df = data.aligned(signal, ret, h)
                     ic = cross_sectional_corr(df, signal, "forward_return", p.method, p.min_obs)
@@ -125,14 +123,11 @@ class AlphaDecay(Metric):
                         }
                     )
         table = pd.DataFrame(rows)
-        summary = {}
-        for row in rows:
-            prefix = f"{row['signal']}/{row['returns']}/h{row['horizon']}"
-            summary[f"{prefix}/mean_ic"] = row["mean_ic"]
-            summary[f"{prefix}/spread_per_period"] = row["spread_per_period"]
         return MetricResult(
             tables={"decay": table},
-            summary=summary,
+            summary=flatten_summary(
+                table, ["signal", "returns", "horizon"], ["mean_ic", "spread_per_period"]
+            ),
             notes=[
                 "spread_per_period converts the average h-period top and bottom returns to a "
                 "per-period rate (total: geometric, specific: arithmetic) before differencing."

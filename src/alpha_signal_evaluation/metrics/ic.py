@@ -4,14 +4,12 @@
 その時系列を要約する。
 """
 
-from typing import Literal
-
 import pandas as pd
 from pydantic import Field
 
 from ..data.bundle import DataBundle
 from ..data.columns import DATE
-from ._common import concat, cross_sectional_corr, flatten_summary, summarize_series
+from ._common import CorrMethod, concat, cross_sectional_corr, flatten_summary, summarize_series
 from .base import Metric, MetricResult, SignalReturnParams
 from .registry import register_metric
 
@@ -29,7 +27,7 @@ class ICParams(SignalReturnParams):
             未満の日付の IC は欠損。
     """
 
-    method: Literal["spearman", "pearson"] = "spearman"
+    method: CorrMethod = "spearman"
     min_obs: int = Field(default=10, ge=3)
 
 

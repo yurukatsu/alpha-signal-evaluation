@@ -4,12 +4,11 @@
 日付ごとのクロスセクション相関の時系列平均を求める。
 """
 
-from typing import Literal
-
 from pydantic import Field
 
 from ..data.bundle import DataBundle
 from ..data.columns import DATE
+from ._common import CorrMethod
 from .base import Metric, MetricParams, MetricResult
 from .registry import register_metric
 
@@ -38,7 +37,7 @@ class FactorCorrelationParams(MetricParams):
     """
 
     signals: list[str] | None = None
-    method: Literal["spearman", "pearson"] = "spearman"
+    method: CorrMethod = "spearman"
     # リスクモデルがあれば、シグナルとスタイルエクスポージャーの相関も出す
     include_exposures: bool = True
     risk_model: str | None = None

@@ -4,14 +4,15 @@
 入力は ``DataBundle.aligned`` 等で時点合わせ済みのデータを前提とする。
 """
 
-from typing import Literal
+from typing import Literal, TypeAlias
 
 import numpy as np
 import pandas as pd
 
+from ..config import Aggregation
 from ..data.columns import DATE
 
-CorrMethod = Literal["spearman", "pearson"]
+CorrMethod: TypeAlias = Literal["spearman", "pearson"]
 
 
 def cross_sectional_corr(
@@ -144,11 +145,11 @@ def assign_quantiles(values: pd.Series, n_quantiles: int) -> pd.Series:
     return q.where(count >= n_quantiles)
 
 
-def per_period_rate(r: float | pd.Series, horizon: int, method: str):
+def per_period_rate(r: float | pd.Series, horizon: int, method: Aggregation):
     """h 期間のリターンを1期間あたりのリターンに換算する。
 
-    ``method="compound"`` なら幾何的に ``(1 + r) ** (1 / horizon) - 1``、それ以外
-    （``"sum"``）なら算術的に ``r / horizon``。
+    ``method="compound"`` なら幾何的に ``(1 + r) ** (1 / horizon) - 1``、``"sum"`` なら
+    算術的に ``r / horizon``。
 
     Args:
         r: h 期間のリターン（スカラーまたは Series）。

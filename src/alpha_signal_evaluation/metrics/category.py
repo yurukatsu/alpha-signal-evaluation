@@ -4,14 +4,12 @@
 （シグナルの特定カテゴリへの偏り）を求める。
 """
 
-from typing import Literal
-
 import pandas as pd
 from pydantic import Field
 
 from ..data.bundle import DataBundle
 from ..data.columns import CATEGORY, DATE
-from ._common import concat, cross_sectional_corr, summarize_series
+from ._common import CorrMethod, concat, cross_sectional_corr, summarize_series
 from .base import Metric, MetricResult, SignalReturnParams
 from .registry import register_metric
 
@@ -31,7 +29,7 @@ class CategoryParams(SignalReturnParams):
             デフォルト ``"category"``。
     """
 
-    method: Literal["spearman", "pearson"] = "spearman"
+    method: CorrMethod = "spearman"
     min_obs: int = Field(default=5, ge=3)
     column: str = CATEGORY  # classification の列（role 名）
 
