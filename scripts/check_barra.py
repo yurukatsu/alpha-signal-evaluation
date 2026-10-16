@@ -7,7 +7,7 @@
 
     uv run python scripts/check_barra.py connection
     uv run python scripts/check_barra.py assumptions --model GEM3 --bid JPNAAB1
-    uv run python scripts/check_barra.py compare path/to/config.yaml
+    uv run python scripts/check_barra.py compare examples/example1/config.barra.yaml
 
 - ``connection``: risk_models（SQL Server）と fs_trfac_glb（PostgreSQL）から数行ずつ読めるか
 - ``assumptions``: 為替 RATE の向き、_IDTY の TDATE、BID の対応、ファクター名の重複、

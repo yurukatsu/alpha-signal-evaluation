@@ -36,6 +36,9 @@ uv run alpha-eval metrics list -v        # 登録済み metric とパラメー�
 uv run python examples/example1/make_sample_data.py && uv run alpha-eval run examples/example1/config.example.yaml
 ```
 
+`example` / `barra-internal-check` ブランチには生成済みの input があるので、そのまま `alpha-eval run` できる
+（`make_sample_data.py` は作り直すときだけ使う。main には input を含めていないので、最初に実行する）。
+
 ### Python API
 
 ```python
