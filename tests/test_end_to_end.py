@@ -370,35 +370,47 @@ def test_factor_covariance_file_is_shaped_like_barra(dataset, tmp_path):
         build_bundle(load_config(cfg))
 
 
-def test_period_returns_below_minus_one_become_missing(dataset):
-    # 行 5 の銘柄 0 の total を -150%（ありえない値）にする
+def test_period_returns_out_of_range_become_missing(dataset):
+    # 行 5 の銘柄 0 の total を -150%、行 6 の銘柄 1 を +3000%（specific はその半分 = +1500%）
     dataset.total[5, 0] = -1.5
+    dataset.total[6, 1] = 30.0
     dataset.write_file_returns()
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)  # log1p の警告が出ないこと
         prepared = build_bundle(load_config(dataset.write_config()))
-    assert any(
-        "'total' period returns: 1 values below -100% treated as missing" in w
-        for w in prepared.warnings
-    )
+    joined = "\n".join(prepared.warnings)
+    assert "'total' period returns: 2 values outside [-1, 10] treated as missing" in joined
+    assert "'specific' period returns: 1 values outside [-1, 10] treated as missing" in joined
     fwd = prepared.bundle.forward_returns
-    code = dataset.codes[0]
-    # realized: 行 4 の h=1 は行 5 の期間リターン → 欠損。他の銘柄・行はそのまま
-    assert np.isnan(fwd["total"][1].loc[dataset.base[4], code])
-    assert fwd["total"][1].loc[dataset.base[3], code] == pytest.approx(dataset.total[4, 0])
-    assert fwd["total"][1].loc[dataset.base[4], dataset.codes[1]] == pytest.approx(
-        dataset.total[5, 1]
+    code0, code1 = dataset.codes[:2]
+    # realized: 行 t の h=1 は行 t+1 の期間リターン
+    assert np.isnan(fwd["total"][1].loc[dataset.base[4], code0])
+    assert np.isnan(fwd["total"][1].loc[dataset.base[5], code1])
+    assert np.isnan(fwd["specific"][1].loc[dataset.base[5], code1])
+    # 範囲内の値はそのまま（specific の -75% は範囲内）
+    assert fwd["specific"][1].loc[dataset.base[4], code0] == pytest.approx(-0.75)
+    assert fwd["total"][1].loc[dataset.base[3], code0] == pytest.approx(dataset.total[4, 0])
+    assert fwd["total"][1].loc[dataset.base[4], code1] == pytest.approx(dataset.total[5, 1])
+
+
+def test_valid_range_can_be_narrowed(dataset):
+    dataset.total[5, 0] = 0.9  # 既定の範囲内だが、[-0.5, 0.5] の外
+    dataset.write_file_returns()
+    cfg = dataset.config()
+    cfg["returns"][0]["valid_range"] = [-0.5, 0.5]
+    prepared = build_bundle(load_config(dataset.write_config(returns=cfg["returns"])))
+    assert any("outside [-0.5, 0.5]" in w for w in prepared.warnings)
+    assert np.isnan(
+        prepared.bundle.forward_returns["total"][1].loc[dataset.base[4], dataset.codes[0]]
     )
-    # specific（加算）は検査しない
-    assert fwd["specific"][1].loc[dataset.base[4], code] == pytest.approx(-0.75)
 
 
-def test_make_bundle_drops_returns_below_minus_one(caplog):
+def test_make_bundle_drops_returns_out_of_range(caplog):
     dates = ["20200131", "20200229", "20200331"]
     signals = pd.DataFrame(
         {"s": [1.0, 2.0, 3.0, 4.0]}, index=pd.MultiIndex.from_product([dates[:2], ["A", "B"]])
     )
-    period = pd.DataFrame({"A": [0.01, -2.0, 0.02], "B": [0.01, 0.03, 0.02]}, index=dates)
+    period = pd.DataFrame({"A": [0.01, -2.0, 0.02], "B": [0.01, 0.03, 0.6]}, index=dates)
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)
         bundle = make_bundle(
@@ -407,11 +419,21 @@ def test_make_bundle_drops_returns_below_minus_one(caplog):
             return_kinds={"total": "total"},
             horizons=[1],
             dates=dates[:2],
+            valid_range=(-1, 0.5),
         )
     fwd = bundle.forward_returns["total"][1]
     assert np.isnan(fwd.loc["20200131", "A"])  # 行 1 の -200% は欠損
     assert fwd.loc["20200131", "B"] == pytest.approx(0.03)
-    assert "below -100% treated as missing" in caplog.text
+    assert np.isnan(fwd.loc["20200229", "B"])  # 行 2 の +60% は (-1, 0.5) の外
+    assert "2 values outside [-1, 0.5] treated as missing" in caplog.text
+    with pytest.raises(ValueError, match="lower bound"):
+        make_bundle(
+            signals,
+            {"total": period},
+            return_kinds={"total": "total"},
+            horizons=[1],
+            valid_range=(-2, 1),
+        )
 
 
 class MultiQueryDB(FakeDB):
