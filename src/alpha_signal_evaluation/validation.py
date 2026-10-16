@@ -30,7 +30,7 @@ from .config import (
     FileSource,
     MetricEntry,
 )
-from .data.barra import BARRA_CONNECTIONS
+from .data import barra
 from .data.bundle import DataSpec
 from .data.calendar import Calendar, check_increasing, load_calendar
 from .data.columns import WEIGHT
@@ -336,21 +336,23 @@ def _check_date_column(
     return []
 
 
-def _iter_barra(cfg: EvaluationConfig) -> Iterator[tuple[str, str, bool]]:
-    """``source: barra`` の (ラベル, match_on, 期間データか) を列挙する。
+def _iter_barra(
+    cfg: EvaluationConfig,
+) -> Iterator[tuple[str, BarraReturnsSource | BarraRiskModelConfig, bool]]:
+    """``source: barra`` の (ラベル, ソース, 期間データか) を列挙する。
 
     ``returns`` の要素は期間データ。リスクモデルは ``factor_returns`` を読む場合に期間データ
     （延長行の境界に使う）。
 
     Yields:
-        ``(ラベル, match_on, 期間データなら True)`` のタプル。
+        ``(ラベル, ソース, 期間データなら True)`` のタプル。
     """
     for i, source in enumerate(cfg.returns):
         if isinstance(source, BarraReturnsSource):
-            yield f"returns[{i}]", source.match_on, True
+            yield f"returns[{i}]", source, True
     for name, model in cfg.risk_models.items():
         if isinstance(model, BarraRiskModelConfig):
-            yield f"risk_models.{name}", model.match_on, "factor_returns" in model.components
+            yield f"risk_models.{name}", model, "factor_returns" in model.components
 
 
 def _missing_files(
@@ -387,15 +389,15 @@ def _check_connections(cfg: EvaluationConfig) -> list[str]:
 
     接続先は重複を除いて1回ずつ確認する（実際の接続はしない）。未知の接続先名は
     ``_check_source`` が報告するため、ここでは飛ばす。``source: barra`` があれば
-    ``data.barra.BARRA_CONNECTIONS`` の接続先も確認する。
+    ``data.barra.connections`` の接続先（``asset_id: bid`` なら対応表の接続先を除く）も確認する。
 
     Returns:
         ``host`` / ``username`` / ``password`` のいずれかが未設定の接続先ごとのエラーメッセージ。
     """
     errors = []
     used = dict.fromkeys(s.connection for _, s, _ in _iter_sources(cfg) if isinstance(s, DBSource))
-    if any(True for _ in _iter_barra(cfg)):
-        used |= dict.fromkeys(BARRA_CONNECTIONS)
+    for _, source, _ in _iter_barra(cfg):
+        used |= dict.fromkeys(barra.connections(source.asset_id))
     for connection in used:
         try:
             config = get_connection_config(connection)
@@ -457,8 +459,8 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
             report.warnings.append(plan.tail_warning)
         for label, source, is_period in _iter_sources(cfg):
             report.errors += _check_source(label, source, is_period, calendar, plan)
-        for label, match_on, is_period in _iter_barra(cfg):
-            report.errors += _check_date_column(label, match_on, is_period, calendar, plan)
+        for label, source, is_period in _iter_barra(cfg):
+            report.errors += _check_date_column(label, source.match_on, is_period, calendar, plan)
 
     report.errors += _check_connections(cfg)
     report.errors += validate_metrics(cfg.enabled_metrics, spec_from_config(cfg))

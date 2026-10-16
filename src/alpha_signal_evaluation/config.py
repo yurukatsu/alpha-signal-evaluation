@@ -375,6 +375,21 @@ class ReturnsDBSource(DBSource):
 BarraModel: TypeAlias = Literal["JPE4", "GEMLT", "GEM3"]
 BarraComponent: TypeAlias = Literal["exposures", "factor_covariance", "factor_returns"]
 Currency: TypeAlias = Literal["local", "USD"]
+# Barra の銘柄 ID（BID）を asset_id にする方法。nri_code は barraid_jp で nri_code にする
+# （対応のない銘柄は捨てる）、bid は BID のまま、mixed は日本株（barraid_jp にある銘柄）は
+# nri_code、それ以外は BID のまま
+BarraAssetId: TypeAlias = Literal["nri_code", "bid", "mixed"]
+
+
+def _default_barra_asset_id(data: Any) -> Any:
+    """Barra のソースの ``asset_id`` の既定値を、モデルから決めて埋める。
+
+    日本株のモデル（``JPE4``）は ``nri_code``、グローバルのモデル（``GEMLT`` / ``GEM3``）は
+    ``mixed``（日本株は nri_code、それ以外は BID）。dict 以外や指定済みならそのまま返す。
+    """
+    if isinstance(data, dict) and data.get("asset_id") is None:
+        return {**data, "asset_id": "nri_code" if data.get("model") == "JPE4" else "mixed"}
+    return data
 
 
 def _barra_series(value: Any) -> Any:
@@ -399,7 +414,7 @@ class BarraReturnsSource(_Base):
 
     社内 DB（接続先 ``risk_models``）から日次の DRTN（トータル）・SRTN（スペシフィック）を
     取得し、``match_on`` の列を境界としてカレンダー期間に集約する（total は複利、
-    specific は加算）。単位の換算（% → 小数）と銘柄 ID の変換（BID → nri_code）は
+    specific は加算）。単位の換算（% → 小数）と銘柄 ID の変換（``asset_id``）は
     読み込み時に行う。詳細は ``data/barra.py``。
 
     Attributes:
@@ -414,6 +429,11 @@ class BarraReturnsSource(_Base):
         series: ``{系列名: kind}``（YAML ``series``、既定 ``{total: total, specific: specific}``）。
             kind は ``total``（DRTN）または ``specific``（SRTN）。系列名は全リターンソースで
             一意である必要がある。
+        asset_id: 銘柄 ID（BID）の扱い（YAML ``asset_id``、既定はモデルで決まり ``JPE4`` は
+            ``nri_code``、``GEMLT`` / ``GEM3`` は ``mixed``）。``nri_code`` は barraid_jp で
+            nri_code にし（対応のない銘柄は捨てる）、``bid`` は BID のまま、``mixed`` は日本株
+            （barraid_jp にある銘柄）を nri_code、それ以外を BID のままにする。BID のまま使う
+            銘柄は、シグナルのある銘柄だけを取得する。
     """
 
     source: Literal["barra"]
@@ -421,9 +441,16 @@ class BarraReturnsSource(_Base):
     match_on: str
     convention: Convention = "realized"
     currency: Currency = "local"
+    asset_id: BarraAssetId
     series: Annotated[dict[str, ReturnSeries], BeforeValidator(_barra_series)] = Field(
         default_factory=_default_barra_series, min_length=1
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_asset_id(cls, data: Any) -> Any:
+        """``asset_id`` が未指定なら、モデルから既定値を決める（``_default_barra_asset_id``）。"""
+        return _default_barra_asset_id(data)
 
     @model_validator(mode="after")
     def _column_is_kind(self) -> "BarraReturnsSource":
@@ -612,6 +639,9 @@ class BarraRiskModelConfig(_Base):
             （YAML ``specific_return``、既定 ``None``）。``RiskModelConfig`` と同じ。
         factor_groups: ``{グループ名: [ファクター名, ...]}``（YAML ``factor_groups``、
             既定 ``None`` = FGROUP から自動で作る）。
+        asset_id: エクスポージャーの銘柄 ID（BID）の扱い（YAML ``asset_id``）。
+            ``BarraReturnsSource.asset_id`` と同じ（既定は ``JPE4`` が ``nri_code``、
+            それ以外は ``mixed``）。
     """
 
     source: Literal["barra"]
@@ -624,6 +654,13 @@ class BarraRiskModelConfig(_Base):
     )
     specific_return: str | None = None
     factor_groups: dict[str, list[str]] | None = None
+    asset_id: BarraAssetId
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_asset_id(cls, data: Any) -> Any:
+        """``asset_id`` が未指定なら、モデルから既定値を決める（``_default_barra_asset_id``）。"""
+        return _default_barra_asset_id(data)
 
     @field_validator("components")
     @classmethod

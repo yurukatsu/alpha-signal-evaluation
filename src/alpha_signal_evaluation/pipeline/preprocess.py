@@ -38,7 +38,7 @@ metrics 側では一切時点をずらさない。loaders（``data/loaders.py``�
 """
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -483,6 +483,7 @@ def _load_period_frames(
     required_roles: set[str],
     convention: Convention,
     warnings: list[str] | None = None,
+    assets: Collection[str] = (),
 ) -> dict[str, pd.DataFrame]:
     """延長行の期間データを読み、values の各列を wide（行=延長行）に変換する。
 
@@ -508,6 +509,7 @@ def _load_period_frames(
         required_roles: ソースに必須の role 名。
         convention: DB の日次→期間集約で使う規約（``realized`` / ``forward``）。
         warnings: 警告文を追記するリスト（Barra ソースで使う）。
+        assets: シグナルのある銘柄（Barra ソースで BID のまま使う銘柄を選ぶのに使う）。
 
     Returns:
         出力名 -> 期間データ。index=date（延長行のキー、延長行と同じ順序・同じ数）、
@@ -523,7 +525,13 @@ def _load_period_frames(
         boundaries = _period_boundaries(plan, source.match_on)
         if isinstance(source, BarraReturnsSource):
             daily = barra.load_returns_daily(
-                source, start, end, boundaries.tolist(), ctx, [] if warnings is None else warnings
+                source,
+                start,
+                end,
+                boundaries.tolist(),
+                ctx,
+                [] if warnings is None else warnings,
+                assets=assets,
             )
         else:
             daily = load_daily(source, start, end, ctx, required_roles)
@@ -631,6 +639,7 @@ def _load_barra_risk_model(
     plan: EvaluationPlan,
     ctx: LoadContext,
     warnings: list[str],
+    assets: Collection[str],
 ) -> RiskModelData:
     """Barra のリスクモデル（``source: barra``）を読み、RiskModelData にまとめる。
 
@@ -641,13 +650,15 @@ def _load_barra_risk_model(
       （``RiskModelConfig`` の DB ソースと同じ規則）。評価行に reindex する。
 
     ``factor_groups`` は config で指定があればそれを、なければ ``{model}_FAC`` の FGROUP から
-    作ったもの（``FactorList.groups``）を使う。
+    作ったもの（``FactorList.groups``）を使う。エクスポージャーの銘柄 ID は
+    ``model.asset_id`` に従う。
 
     Args:
         model: Barra のリスクモデルの config。
         plan: 評価計画。
         ctx: 読み込みコンテキスト。
         warnings: 警告文を追記するリスト。
+        assets: シグナルのある銘柄（BID のまま使う銘柄を選ぶのに使う）。
 
     Returns:
         読み込んだ RiskModelData（``specific_risk`` は常に None）。
@@ -660,7 +671,9 @@ def _load_barra_risk_model(
     exposures = factor_covariance = None
     forward_factor = {}
     if "exposures" in model.components:
-        exposures = barra.load_exposures(model.model, targets, factors, ctx, warnings)
+        exposures = barra.load_exposures(
+            model.model, targets, factors, ctx, warnings, asset_id=model.asset_id, assets=assets
+        )
     if "factor_covariance" in model.components:
         factor_covariance = barra.load_factor_covariance(
             model.model, targets, factors, ctx, warnings
@@ -795,6 +808,7 @@ def _load_risk_model(
     plan: EvaluationPlan,
     ctx: LoadContext,
     warnings: list[str],
+    assets: Collection[str],
 ) -> RiskModelData:
     """1つのリスクモデルを読み、RiskModelData にまとめる。
 
@@ -808,12 +822,13 @@ def _load_risk_model(
         plan: 評価計画。
         ctx: 読み込みコンテキスト。
         warnings: 警告文を追記するリスト。
+        assets: シグナルのある銘柄（Barra で BID のまま使う銘柄を選ぶのに使う）。
 
     Returns:
         読み込んだ RiskModelData。
     """
     if isinstance(model, BarraRiskModelConfig):
-        data = _load_barra_risk_model(model, plan, ctx, warnings)
+        data = _load_barra_risk_model(model, plan, ctx, warnings, assets)
     else:
         data = _load_custom_risk_model(model, plan, ctx)
     if model.specific_return is None:
@@ -911,6 +926,9 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
             bm = load_snapshot(cfg.benchmark, plan.eval_rows, ctx, {ASSET_ID, WEIGHT})
             benchmark_weights = bm.set_index([DATE, ASSET_ID])[[WEIGHT]].astype(float).sort_index()
 
+        # Barra で BID のまま使う銘柄は、シグナルのある銘柄（ユニバース適用後）に限る
+        assets = signals.index.get_level_values(ASSET_ID).unique().tolist()
+
         classification = None
         if cfg.data.classification is not None:
             classification = _load_classification(cfg.data.classification, plan, ctx)
@@ -930,13 +948,14 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                 required_roles=required,
                 convention=source.convention,
                 warnings=warnings,
+                assets=assets,
             )
             for name, period in periods.items():
                 method = AGGREGATION_BY_KIND[source.series[name].kind]
                 fwd[name] = _forward_on_eval_rows(period, plan, source.convention, method)
 
         risk_models = {
-            name: _load_risk_model(name, model, plan, ctx, warnings)
+            name: _load_risk_model(name, model, plan, ctx, warnings, assets)
             for name, model in cfg.risk_models.items()
         }
 

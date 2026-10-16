@@ -56,7 +56,7 @@ returns:
   #     total:    {column: ret,  kind: total}
   #     specific: {column: sret, kind: specific}
   # 本番（Barra）: 社内 DB の Barra の日次リターン（DRTN / SRTN）を Trading_day の区間に集約する。
-  # SQL は不要。% は小数に、銘柄 ID は BID → nri_code（barraid_jp）に変換される。
+  # SQL は不要。% は小数に、銘柄 ID は BID → nri_code（barraid_jp）に変換される（JPE4 の既定）。
   # .env に接続先 risk_models と fs_trfac_glb の設定が必要。
   # 系列名が上のファイルのリターンと重なるので、使うときはどちらか一方にする（系列名は全ソースで一意）
   # - source: barra
