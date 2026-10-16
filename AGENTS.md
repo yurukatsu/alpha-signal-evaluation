@@ -46,6 +46,7 @@ cli → api → validation / pipeline → data → io
   signals / returns / horizons を持つ場合は `SignalReturnParams` を継承すると存在チェックが自動で入る。
 - 期間をまたぐリターン集計は `ReturnAggregation`（算術平均と幾何平均を両方出す、累積は kind ごとに選択可）。
   kind ごとの束ね方（total は複利、specific は加算）は `config.AGGREGATION_BY_KIND` の1か所で定義する。
+- リスクモデルの `factor_covariance` はソースによらず index=(date, factor)、columns=ファクターの正方行列（年率の小数²）。
 - 型エイリアスは `TypeAlias` で書く。コメント・docstring は日本語。
 
 ## 未実装・未決事項
@@ -53,6 +54,6 @@ cli → api → validation / pipeline → data → io
 - metrics: `factor_exposure`, `residual_ic`, `spread_factor_regression`, `risk_decomposition`, `brinson`
 - `portfolios`（config では枠だけ予約。指定するとエラー）、ベンチマークウェイト
 - preprocess の整合チェック（トータル ≈ エクスポージャー × ファクターリターン + スペシフィック）
-- `factor_covariance`（Barra 以外）/ `specific_risk` はソースの形式のまま読み込んでいる（.dat の具体的な形式が未確定）
+- `specific_risk` はソースの形式のまま読み込んでいる（.dat の具体的な形式が未確定。合成データでは仮に `specific_risk` 列）
 - Barra の `specific_risk`、`barraid_jp` にない（日本以外の）銘柄の扱い
 - `read_sql` の速度実測（遅ければ chunksize / connectorx）、`report/` の html 出力

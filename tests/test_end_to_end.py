@@ -327,6 +327,47 @@ def test_risk_model_files_are_aligned(dataset):
     assert evaluate(cfg).ok
 
 
+def test_factor_covariance_file_is_shaped_like_barra(dataset, tmp_path):
+    (dataset.root / "cov").mkdir()
+    for r in dict.fromkeys(dataset.rskmdl):
+        # 列の順序は行と違ってよい。数値でない列は捨てる
+        pd.DataFrame(
+            {
+                "f": ["SIZE", "VALUE"],
+                "VALUE": [0.1, 0.4],
+                "SIZE": [0.2, 0.1],
+                "label": ["a", "b"],
+            }
+        ).to_csv(dataset.root / "cov" / f"{r}.csv", index=False)
+    risk_models = {
+        "m": {
+            "factor_covariance": {
+                "source": "file",
+                "path": "cov/{Rskmdl_month}.csv",
+                "columns": {"factor": "f"},
+            },
+            "specific_return": "specific",
+        }
+    }
+    cfg = dataset.write_config(risk_models=risk_models)
+    bundle = build_bundle(load_config(cfg)).bundle
+    cov = bundle.risk_models["m"].factor_covariance
+    first = bundle.dates[0]
+    assert cov.index.names == ["date", "factor"]
+    assert cov.columns.name == "factor"
+    assert list(cov.index.unique("date")) == list(bundle.dates)
+    assert list(cov.loc[first].index) == list(cov.columns) == ["SIZE", "VALUE"]
+    assert cov.loc[(first, "VALUE"), "SIZE"] == pytest.approx(0.1)
+
+    # 行と列のファクターが一致しなければエラー
+    rskmdl = dataset.rskmdl[dataset.base.index(first)]
+    pd.DataFrame({"f": ["SIZE"], "SIZE": [0.2], "VALUE": [0.1]}).to_csv(
+        dataset.root / "cov" / f"{rskmdl}.csv", index=False
+    )
+    with pytest.raises(ValueError, match="square matrix"):
+        build_bundle(load_config(cfg))
+
+
 class MultiQueryDB(FakeDB):
     """SQL の中身で返すデータを切り替える。"""
 

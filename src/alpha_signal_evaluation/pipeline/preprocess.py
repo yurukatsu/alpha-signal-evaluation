@@ -682,6 +682,54 @@ def _load_barra_risk_model(
     )
 
 
+def _covariance_matrix(df: pd.DataFrame, source: FileSource | DBSource) -> pd.DataFrame:
+    """ファクター共分散のスナップショットを Barra（``source: barra``）と同じ形に揃える。
+
+    入力は日付ごとの共分散行列を縦に積んだ形: ``factor`` 列が行のファクター名、
+    ファクター名を列名に持つ数値列が各列（数値でない列は捨てる）。日付ごとに、値のある列の
+    集合は行のファクターの集合と一致していなければならない。値はそのまま使う（単位の換算は
+    しない）。
+
+    Args:
+        df: ``load_snapshot`` の結果（``date`` / ``factor`` 列とファクターごとの数値列）。
+        source: 読み込んだソース（エラーメッセージに使う）。
+
+    Returns:
+        index=(date, factor)、columns=ファクター名（名前 ``factor``）の DataFrame。
+        行・列ともにファイルでの行の出現順で、日付ごとに正方行列になるように
+        reindex する（ない組は欠損）。
+
+    Raises:
+        ValueError: (date, factor) が重複している場合、またはある日付で値のある列と
+            行のファクターが一致しない場合。
+    """
+    if df.empty:
+        return pd.DataFrame(index=pd.MultiIndex.from_arrays([[], []], names=[DATE, FACTOR]))
+    dup = df.duplicated([DATE, FACTOR])
+    if dup.any():
+        examples = df.loc[dup, [DATE, FACTOR]].head(5).to_dict("records")
+        raise ValueError(
+            f"Duplicated ({DATE}, {FACTOR}) rows in {describe_source(source)}: {examples}"
+        )
+    # 日付ごとに、値のある列の集合と行のファクターの集合が一致するか（ファイルごとの欠けを検出する）
+    values = df.drop(columns=[DATE, FACTOR]).select_dtypes("number")
+    has_column = values.notna().groupby(df[DATE]).any()
+    for date, rows in df.groupby(DATE)[FACTOR]:
+        columns = set(has_column.columns[has_column.loc[date]])
+        if columns != set(rows):
+            raise ValueError(
+                f"Factor covariance in {describe_source(source)} must be a square matrix "
+                f"on each date; on {date}: columns without a row {sorted(columns - set(rows))}, "
+                f"rows without a column {sorted(set(rows) - columns)}"
+            )
+    factors = list(pd.unique(df[FACTOR]))
+    dates = sorted(df[DATE].unique())
+    matrix = df.set_index([DATE, FACTOR])[factors].astype(float)
+    matrix = matrix.reindex(pd.MultiIndex.from_product([dates, factors], names=[DATE, FACTOR]))
+    matrix.columns.name = FACTOR
+    return matrix
+
+
 def _load_custom_risk_model(
     model: RiskModelConfig, plan: EvaluationPlan, ctx: LoadContext
 ) -> RiskModelData:
@@ -689,7 +737,8 @@ def _load_custom_risk_model(
 
     - exposures: 評価行のスナップショット。数値列だけをファクターとして残す
       （銘柄名などの文字列列は除く）。index=(date, asset_id)、columns=ファクター。
-    - factor_covariance: 評価行のスナップショット。index=date、列はソースのまま。
+    - factor_covariance: 評価行のスナップショット。Barra と同じ形
+      （index=(date, factor)、columns=ファクター名）に揃える（``_covariance_matrix``）。
     - specific_risk: 評価行のスナップショット。index=(date, asset_id)。
     - factor_returns: 延長行の期間データ（index=date、columns=factor）を読み
       （DB なら日次を加算で期間に集約）、ソースの convention に従って銘柄の
@@ -712,8 +761,8 @@ def _load_custom_risk_model(
         df = load_snapshot(model.exposures, plan.eval_rows, ctx, {ASSET_ID})
         exposures = df.set_index([DATE, ASSET_ID]).select_dtypes("number").sort_index()
     if model.factor_covariance is not None:
-        df = load_snapshot(model.factor_covariance, plan.eval_rows, ctx)
-        factor_covariance = df.set_index(DATE)
+        df = load_snapshot(model.factor_covariance, plan.eval_rows, ctx, {FACTOR})
+        factor_covariance = _covariance_matrix(df, model.factor_covariance)
     if model.specific_risk is not None:
         df = load_snapshot(model.specific_risk, plan.eval_rows, ctx, {ASSET_ID})
         specific_risk = df.set_index([DATE, ASSET_ID]).sort_index()
