@@ -493,22 +493,23 @@ def test_bid_does_not_require_id_map_connection(world, monkeypatch, barra_env):
     assert any("fs_trfac_glb" in e for e in validate(nri_code).errors)
 
 
-def test_daily_returns_below_minus_one_become_missing(world):
-    # 4月の期間の1日だけ、JPNA001 の DRTN を -150%（ありえない値）にする
-    table = world.fakes["risk_models"].tables[f"{MODEL}_D_PRC"]
+def test_daily_returns_out_of_range_become_missing(world):
+    # 4月の期間の1日だけ、JPNA001 の DRTN を -150%、SRTN を特殊値（-9.968e+08 %）にする
     key = world.base[3]
     days = world.period_days(world.base.index(key) + 1)
-    bad = (table["DATE"] == int(days[0])) & (table["BID"] == "JPNA001 ")
-    table.loc[bad, "DRTN"] = -150.0
+    for table, column, value in [("D_PRC", "DRTN", -150.0), ("D_SRTN", "SRTN", -9.968e8)]:
+        df = world.fakes["risk_models"].tables[f"{MODEL}_{table}"]
+        df.loc[(df["DATE"] == int(days[0])) & (df["BID"] == "JPNA001 "), column] = value
     cfg = EvaluationConfig.model_validate(world.config(returns=[returns_source()]))
     with warnings.catch_warnings():
         warnings.simplefilter("error", RuntimeWarning)  # log1p の警告が出ないこと
         prepared = build_bundle(cfg)
-    assert any(
-        "'total' daily returns: 1 values below -100% treated as missing" in w
-        for w in prepared.warnings
-    )
-    # その日を除いた残りの日で複利にする（期間全体は欠損にしない）
-    total = prepared.bundle.forward_returns["total"][1]
-    expected = (1 + world.drtn.loc[days[1:], "JPNA001"] / 100).prod() - 1
-    assert total.loc[key, NRI[0]] == pytest.approx(expected)
+    joined = "\n".join(prepared.warnings)
+    assert "'total' daily returns: 1 values outside [-1, 10] treated as missing" in joined
+    assert "'specific' daily returns: 1 values outside [-1, 10] treated as missing" in joined
+    # その日を除いた残りの日で集約する（期間全体は欠損にしない）
+    fwd = prepared.bundle.forward_returns
+    expected_total = (1 + world.drtn.loc[days[1:], "JPNA001"] / 100).prod() - 1
+    expected_specific = (world.srtn.loc[days[1:], "JPNA001"] / 100).sum()
+    assert fwd["total"][1].loc[key, NRI[0]] == pytest.approx(expected_total)
+    assert fwd["specific"][1].loc[key, NRI[0]] == pytest.approx(expected_specific)

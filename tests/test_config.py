@@ -189,3 +189,27 @@ def test_full_reference_config_is_valid():
     # enabled: false の metric も含めてパラメータを検証する
     assert validate_metrics(cfg.metrics, spec_from_config(cfg)) == []
     assert len(cfg.metrics) == 9 and len(cfg.enabled_metrics) == 8
+
+
+def test_valid_range_is_checked():
+    def source(**kw):
+        return {
+            "version": 1,
+            "returns": [
+                {
+                    "source": "file",
+                    "path": "r.csv",
+                    "series": {"total": {"column": "r", "kind": "total"}},
+                    **kw,
+                }
+            ],
+        }
+
+    assert EvaluationConfig.model_validate(source()).returns[0].valid_range == (-1.0, 10.0)
+    assert EvaluationConfig.model_validate(source(valid_range=[-0.5, 2])).returns[
+        0
+    ].valid_range == (-0.5, 2.0)
+    with pytest.raises(ValidationError, match="lower bound must be >= -1"):
+        EvaluationConfig.model_validate(source(valid_range=[-2, 1]))
+    with pytest.raises(ValidationError, match="below the upper bound"):
+        EvaluationConfig.model_validate(source(valid_range=[1, 1]))

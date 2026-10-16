@@ -336,6 +336,27 @@ class ReturnSeries(_Base):
     kind: ReturnKind
 
 
+def check_valid_range(value: tuple[float, float]) -> tuple[float, float]:
+    """リターンの有効範囲 ``(下限, 上限)`` を検証する。
+
+    Raises:
+        ValueError: 下限が -1 未満の場合（-100% 未満のリターンはありえず、複利の計算も
+            できない）、または下限が上限以上の場合。
+    """
+    lower, upper = value
+    if lower < -1:
+        raise ValueError(f"valid_range lower bound must be >= -1 (-100%), got {lower}")
+    if lower >= upper:
+        raise ValueError(f"valid_range lower bound must be below the upper bound, got {value}")
+    return value
+
+
+# リターンの有効範囲 [下限, 上限]（両端を含む）。範囲外の値はデータの誤りとして欠損にする
+ValidRange = Annotated[tuple[float, float], AfterValidator(check_valid_range)]
+# 既定は -100% 〜 +1000%。DB の特殊値などの壊れた値だけを外す緩い範囲（外れ値の処理ではない）
+DEFAULT_VALID_RANGE: tuple[float, float] = (-1.0, 10.0)
+
+
 class ReturnsFileSource(FileSource):
     """ファイルから読むリターンソース（``returns`` の要素、``source: file``）。
 
@@ -348,10 +369,13 @@ class ReturnsFileSource(FileSource):
             行 t → t+1 のリターン。
         series: ``{系列名: ReturnSeries}``（YAML ``series``、必須・1件以上）。
             系列名は全リターンソースで一意である必要がある。
+        valid_range: リターンの有効範囲 ``[下限, 上限]``（YAML ``valid_range``、
+            既定 ``[-1, 10]``）。範囲外の期間リターンは欠損にして警告する（``ValidRange``）。
     """
 
     convention: Convention = "realized"
     series: dict[str, ReturnSeries] = Field(min_length=1)
+    valid_range: ValidRange = DEFAULT_VALID_RANGE
 
 
 class ReturnsDBSource(DBSource):
@@ -365,11 +389,14 @@ class ReturnsDBSource(DBSource):
         series: ``{系列名: ReturnSeries}``（YAML ``series``、必須・1件以上）。
         match_on: 期間の境界となるカレンダーの列（YAML ``match_on``、必須）。日付列なら
             ``(前行の日付, 当該行の日付]``（realized）を、月列ならその月を1期間とする。
+        valid_range: リターンの有効範囲 ``[下限, 上限]``（YAML ``valid_range``、
+            既定 ``[-1, 10]``）。範囲外の日次リターンは欠損にして警告する（``ValidRange``）。
     """
 
     convention: Convention = "realized"
     series: dict[str, ReturnSeries] = Field(min_length=1)
     match_on: str  # DB は日次で取得してカレンダー期間に集約するため必須
+    valid_range: ValidRange = DEFAULT_VALID_RANGE
 
 
 BarraModel: TypeAlias = Literal["JPE4", "GEMLT", "GEM3"]
@@ -434,6 +461,9 @@ class BarraReturnsSource(_Base):
             ``nri_code``、``GEMLT`` / ``GEM3`` は ``bid``）。``nri_code`` は barraid_jp で
             nri_code にし（対応のない銘柄は捨てる）、``bid`` は日本株も含めて BID のまま使う
             （barraid_jp は読まず、シグナルのある銘柄だけを取得する）。
+        valid_range: リターンの有効範囲 ``[下限, 上限]``（YAML ``valid_range``、
+            既定 ``[-1, 10]``）。小数に換算（USD 換算を含む）した後の日次の DRTN / SRTN の
+            範囲外の値は欠損にして警告する（``ValidRange``）。
     """
 
     source: Literal["barra"]
@@ -445,6 +475,7 @@ class BarraReturnsSource(_Base):
     series: Annotated[dict[str, ReturnSeries], BeforeValidator(_barra_series)] = Field(
         default_factory=_default_barra_series, min_length=1
     )
+    valid_range: ValidRange = DEFAULT_VALID_RANGE
 
     @model_validator(mode="before")
     @classmethod

@@ -14,6 +14,8 @@
    metrics はシグナルとリターンを `DataBundle.aligned()` で取り出すだけ。時点合わせを変更したら
    `tests/pipeline/test_time_alignment.py` と `tests/test_end_to_end.py::test_file_pipeline_is_time_aligned` を必ず通す。
 2. **欠損は欠損のまま。** リターンを 0 埋めしない（集約は `min_count=1`、ローリングは `min_periods=h`）。
+   範囲外のリターン（`valid_range`）はデータの誤りとして preprocess で欠損にする。統計的な外れ値の処理
+   （ウィンソライズ等）が必要なら metric のパラメータで行い、読み込み側には入れない。
 3. **設定ミスは計算前にすべて検出する。** 構造は `config.py`（pydantic、`extra="forbid"`）、
    意味（カレンダー・レジストリ・ファイル存在）は `validation.py`。新しい設定項目を足したら両方を検討する。
 4. **認証情報・接続先ホスト名はコードにも config にも書かない。** 環境変数から読む（`io/db/config.py`）。
