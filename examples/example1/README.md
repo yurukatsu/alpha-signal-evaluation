@@ -9,6 +9,9 @@ uv run alpha-eval validate examples/example1/config.example.yaml
 uv run alpha-eval run examples/example1/config.example.yaml  # examples/example1/output に結果を書き出す
 ```
 
+`example` / `barra-internal-check` ブランチには生成済みの `input/` があるので、最初の `make_sample_data.py` は不要
+（作り直すときは `input/` を消してから実行する）。
+
 | パス | 内容 | 形式 |
 |---|---|---|
 | `input/calendar.dat`（`date_eom.dat`） | カレンダー | ヘッダー先頭 `#`、タブ区切り（末尾はスペース区切り） |
