@@ -13,7 +13,9 @@ def test_builtin_metrics_are_discovered():
     for name in [
         "ic",
         "quantile",
-        "category",
+        "category_ic",
+        "category_quantile",
+        "category_returns",
         "alpha_decay",
         "autocorr",
         "factor_correlation",

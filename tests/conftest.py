@@ -133,7 +133,7 @@ class Dataset:
             "metrics": [
                 {"name": "ic", "params": {"method": "spearman", "min_obs": 5}},
                 {"name": "quantile", "params": {"n_quantiles": 3}},
-                {"name": "category", "params": {"min_obs": 3}},
+                {"name": "category_ic", "params": {"min_obs": 3}},
             ],
             "output": {"dir": "out", "formats": ["parquet", "xlsx"]},
             "cache": {"dir": ".cache"},

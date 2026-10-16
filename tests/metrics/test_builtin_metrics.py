@@ -93,9 +93,9 @@ class TestQuantile:
 
 
 def test_category_ic_is_positive_in_every_sector(bundle):
-    result = get_metric("category")(signals=["alpha"], returns=["specific"], horizons=[1]).compute(
-        bundle
-    )
+    result = get_metric("category_ic")(
+        signals=["alpha"], returns=["specific"], horizons=[1]
+    ).compute(bundle)
     table = result.tables["summary"]
     assert len(table) == 5
     assert (table["mean_ic"] > 0).all()
@@ -222,7 +222,7 @@ def test_check_reports_unknown_references():
     ic = get_metric("ic")
     errors = ic.check(ic.Params(signals=["nope"], returns=["specific"], horizons=[12]), spec)
     assert len(errors) == 3
-    category = get_metric("category")
+    category = get_metric("category_ic")
     assert "classification" in category.check(category.Params(), spec)[0]
 
 

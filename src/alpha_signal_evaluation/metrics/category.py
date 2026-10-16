@@ -1,6 +1,6 @@
 """カテゴリ（業種等）別分析の metric。
 
-- ``category``: カテゴリ内の IC（カテゴリ内でのみ銘柄を比較した予測力）と、カテゴリ別の
+- ``category_ic``: カテゴリ内の IC（カテゴリ内でのみ銘柄を比較した予測力）と、カテゴリ別の
   平均シグナル（シグナルの特定カテゴリへの偏り）。
 - ``category_quantile``: カテゴリ内で割り当てた分位のポートフォリオ。カテゴリごとの結果と、
   全カテゴリを合わせたカテゴリ中立の結果。
@@ -28,8 +28,8 @@ from .base import Metric, MetricParams, MetricResult, ReturnAggregation, SignalR
 from .registry import register_metric
 
 
-class CategoryParams(SignalReturnParams):
-    """``category`` metric のパラメータ。
+class CategoryICParams(SignalReturnParams):
+    """``category_ic`` metric のパラメータ。
 
     Attributes:
         signals: 評価するシグナル名。デフォルト ``None``（全シグナル）。
@@ -49,7 +49,7 @@ class CategoryParams(SignalReturnParams):
 
 
 @register_metric
-class CategoryAnalysis(Metric):
+class CategoryIC(Metric):
     """カテゴリ（業種等）内の IC と、カテゴリ別の平均シグナル（カテゴリへの偏り）。
 
     カテゴリ内 IC: シグナル × リターン系列 × ホライズンの組ごとに、``data.aligned`` の
@@ -63,7 +63,7 @@ class CategoryAnalysis(Metric):
     classification と内部結合したシグナルの日付 × カテゴリごとの平均と銘柄数を求める。
     シグナルの生の値の平均であり、ユニバース平均との差ではない。
 
-    パラメータは :class:`CategoryParams` を参照。以下 ``<column>`` は ``params.column``
+    パラメータは :class:`CategoryICParams` を参照。以下 ``<column>`` は ``params.column``
     の値（デフォルト ``category``）の列名を表す。
 
     出力:
@@ -79,10 +79,10 @@ class CategoryAnalysis(Metric):
         summary: なし（空の辞書。結果は表だけで返す）。
     """
 
-    name = "category"
+    name = "category_ic"
     description = "IC within each category (e.g. sector) and average signal by category"
     requires = frozenset({"signals", "forward_returns", "classification"})
-    Params = CategoryParams
+    Params = CategoryICParams
 
     def compute(self, data: DataBundle) -> MetricResult:
         """全てのシグナルについてカテゴリ別の平均シグナルとカテゴリ内 IC を求める。
