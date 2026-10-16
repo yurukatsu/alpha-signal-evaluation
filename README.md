@@ -137,7 +137,7 @@ my_metric = "my_package.my_metric"
 |---|---|---|
 | `ic` | IC（spearman / pearson）、Newey-West t 値 | signals, forward_returns |
 | `quantile` | 分位ポートフォリオのリターン・スプレッド・累積リターン | signals, forward_returns |
-| `category` | カテゴリ内 IC とカテゴリ別平均シグナル | signals, forward_returns, classification |
+| `category_ic` | カテゴリ内 IC とカテゴリ別平均シグナル | signals, forward_returns, classification |
 | `category_quantile` | カテゴリ内の分位ポートフォリオ（カテゴリ別とカテゴリ中立のスプレッド） | signals, forward_returns, classification |
 | `category_returns` | カテゴリ別の平均・累積リターン（シグナルのある銘柄の等ウェイト） | signals, forward_returns, classification |
 | `alpha_decay` | ホライズン別の IC / スプレッド | signals, forward_returns |

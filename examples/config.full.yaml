@@ -88,7 +88,7 @@ data:
       columns: {asset_id: code, date: dt}
       values: {momentum: mom_12_1}
 
-  # 業種等の分類（任意。category metric で使う）
+  # 業種等の分類（任意。category_ic などのカテゴリ別 metric で使う）
   classification:
     source: file
     path: ./input/labels/{Label2}.csv
@@ -240,7 +240,7 @@ metrics:
     params: {n_quantiles: 10, signals: [ai], returns: [specific], horizons: [1]}
 
   # カテゴリ（業種等）内の IC とカテゴリ別の平均シグナル（classification が必要）
-  - name: category
+  - name: category_ic
     params:
       method: spearman
       returns: [specific]

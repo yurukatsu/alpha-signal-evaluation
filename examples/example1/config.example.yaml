@@ -64,7 +64,7 @@ metrics:
   - name: quantile
     id: quantile_q10_specific  # 同じ metric を複数回使う場合は id 必須
     params: {n_quantiles: 10, signals: [ai], returns: [specific], horizons: [1]}
-  - name: category
+  - name: category_ic
     params: {returns: [specific], horizons: [1]}
   - name: alpha_decay
   - name: autocorr
