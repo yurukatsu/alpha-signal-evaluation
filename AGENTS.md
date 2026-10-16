@@ -55,5 +55,5 @@ cli → api → validation / pipeline → data → io
 - `portfolios`（config では枠だけ予約。指定するとエラー）、ベンチマークウェイト
 - preprocess の整合チェック（トータル ≈ エクスポージャー × ファクターリターン + スペシフィック）
 - `specific_risk` はソースの形式のまま読み込んでいる（.dat の具体的な形式が未確定。合成データでは仮に `specific_risk` 列）
-- Barra の `specific_risk`、`barraid_jp` にない（日本以外の）銘柄の扱い
+- Barra の `specific_risk`
 - `read_sql` の速度実測（遅ければ chunksize / connectorx）、`report/` の html 出力

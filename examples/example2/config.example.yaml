@@ -53,16 +53,16 @@ returns:
   #     total:    {column: ret,  kind: total}
   #     specific: {column: sret, kind: specific}
   # 本番（Barra）: 社内 DB の Barra の日次リターン（DRTN / SRTN）を、カレンダーの月ごとに集約する。
-  # SQL は不要。% は小数に、銘柄 ID は BID → nri_code（barraid_jp）に変換される。
-  # .env に接続先 risk_models と fs_trfac_glb の設定が必要。
+  # SQL は不要。% は小数に。銘柄 ID は asset_id で選ぶ（GEMLT / GEM3 の既定は mixed:
+  # 日本株は nri_code、それ以外は BID のまま。このサンプルのように BID のシグナルと一致する）。
+  # .env に接続先 risk_models と fs_trfac_glb の設定が必要（asset_id: bid なら risk_models だけ）。
   # 系列名が上のファイルのリターンと重なるので、使うときはどちらか一方にする（系列名は全ソースで一意）
-  # 注意: 現状は銘柄 ID を必ず nri_code に変換するため、このサンプルのように BID のまま
-  # （日本以外の銘柄を含む）のシグナルとは銘柄が一致しない（未対応）
   # - source: barra
   #   model: GEMLT                 # JPE4 / GEMLT / GEM3
   #   match_on: Trading_month      # 月（YYYYMM）なら、その月の1日〜月末日を1期間とする
   #   convention: realized
   #   currency: USD                # local なら取引通貨建て（DB の値のまま）
+  #   asset_id: mixed              # nri_code / bid / mixed
   #   series: {total: total, specific: specific}   # 系列名: kind（省略時もこの2系列）
 
 metrics:
