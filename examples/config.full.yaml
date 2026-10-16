@@ -248,6 +248,21 @@ metrics:
       min_obs: 5
       column: category          # classification の列（role 名）
 
+  # カテゴリ内の分位ポートフォリオと、全カテゴリを合わせたカテゴリ中立のスプレッド
+  - name: category_quantile
+    params:
+      n_quantiles: 5            # カテゴリ内の分位数（銘柄数が足りない日付 × カテゴリは除く）
+      column: category
+      aggregation:
+        cumulative: {total: compound, specific: sum}
+
+  # カテゴリ別の平均フォワードリターンと累積リターン（シグナルのある銘柄の等ウェイト）
+  - name: category_returns
+    params:
+      returns: [total]
+      horizons: [1]
+      column: category
+
   # ホライズン別の IC・分位スプレッド
   - name: alpha_decay
     params:

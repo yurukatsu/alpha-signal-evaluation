@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -97,6 +99,68 @@ def test_category_ic_is_positive_in_every_sector(bundle):
     table = result.tables["summary"]
     assert len(table) == 5
     assert (table["mean_ic"] > 0).all()
+
+
+class TestCategoryQuantile:
+    def test_neutral_spread_is_positive_for_informative_signal(self, bundle):
+        result = get_metric("category_quantile")(signals=["alpha", "noise"]).compute(bundle)
+        neutral = result.tables["neutral_summary"].set_index(["signal", "returns", "horizon"])
+        spread = neutral[neutral["portfolio"] == "spread"]
+        assert spread.loc[("alpha", "specific", 1), "t_stat"] > 3
+        assert abs(spread.loc[("noise", "specific", 1), "t_stat"]) < 2
+        per_category = result.tables["summary"]
+        alpha = per_category[
+            (per_category["signal"] == "alpha")
+            & (per_category["horizon"] == 1)
+            & (per_category["portfolio"] == "spread")
+        ]
+        assert len(alpha) == 2 * 5  # returns 2系列 × 5業種
+        assert (alpha["arith_mean"] > 0).all()
+
+    def test_quantiles_are_assigned_within_category(self, bundle):
+        result = get_metric("category_quantile")(
+            signals=["alpha"], returns=["total"], horizons=[1], n_quantiles=4
+        ).compute(bundle)
+        date = bundle.dates[3]
+        returns = result.tables["returns"]
+        per_category = returns[returns["date"] == date]
+        # 各業種の中で分位の銘柄数がほぼ均等（16銘柄 → 4 × 4）
+        counts = per_category.groupby("category")["n"]
+        assert (counts.max() - counts.min() <= 1).all()
+        # カテゴリ中立の分位は、各業種の同じ分位の銘柄を合わせたもの（銘柄の等ウェイト）
+        neutral = result.tables["neutral_returns"]
+        neutral = neutral[neutral["date"] == date].set_index("quantile")
+        pooled = per_category.assign(total=lambda d: d["mean_return"] * d["n"]).groupby("quantile")
+        assert (neutral["n"] == pooled["n"].sum()).all()
+        expected = pooled["total"].sum() / pooled["n"].sum()
+        pd.testing.assert_series_equal(neutral["mean_return"], expected, check_names=False)
+
+
+class TestCategoryReturns:
+    def test_matches_manual_average_over_assets_with_signals(self, bundle):
+        # 半分の銘柄のシグナルを落とす → その銘柄はカテゴリ別リターンに含まれない
+        assets = bundle.signals.index.get_level_values("asset_id")
+        kept = replace(bundle, signals=bundle.signals[assets < "A0040"])
+        result = get_metric("category_returns")(returns=["total"], horizons=[1]).compute(kept)
+        date = bundle.dates[4]
+        returns = result.tables["returns"]
+        row = returns[(returns["date"] == date) & (returns["category"] == "S0")].iloc[0]
+        members = kept.signals.xs(date, level="date").dropna(how="all").index
+        sector = bundle.classification.xs(date, level="date")["category"]
+        members = [a for a in members if sector[a] == "S0"]
+        fwd = bundle.forward_returns["total"][1].loc[date, members]
+        assert row["n"] == len(members) == 8
+        assert row["mean_return"] == pytest.approx(fwd.mean())
+
+    def test_cumulative_follows_kind(self, bundle):
+        result = get_metric("category_returns")(horizons=[1]).compute(bundle)
+        returns = result.tables["returns"].query("category == 'S1'")
+        cum = result.tables["cumulative"].query("category == 'S1'")
+        spec = returns[returns["returns"] == "specific"]["mean_return"]
+        total = returns[returns["returns"] == "total"]["mean_return"]
+        last = cum.groupby("returns")["cumulative_return"].last()
+        assert last["specific"] == pytest.approx(spec.sum())  # specific は加算
+        assert last["total"] == pytest.approx((1 + total).prod() - 1)  # total は複利
 
 
 def test_alpha_decay_covers_all_horizons(bundle):
