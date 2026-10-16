@@ -25,14 +25,15 @@ SQL・単位の換算・銘柄 ID の変換・通貨換算をここに閉じ込�
 
 銘柄 ID: config の ``asset_id`` で BID の扱いを選ぶ（``AssetIds``）。
 
-- ``nri_code``: ``barraid_jp`` で nri_code に変換し、対応のない BID は捨てる。
-- ``bid``: BID のまま使う（``barraid_jp`` は読まない）。
-- ``mixed``: 日本株（``barraid_jp`` にある銘柄）は nri_code、それ以外は BID のまま。
+- ``nri_code``（日本株だけのモデル、``JPE4`` の既定）: ``barraid_jp`` で nri_code に変換し、
+  対応のない BID は捨てる。取得する BID は対応表にあるものに限る。
+- ``bid``（日本株を含むグローバルのモデル、``GEMLT`` / ``GEM3`` の既定）: 日本株も含めて
+  BID のまま使う。``barraid_jp`` は読まず、GEM3 等で全銘柄を読まないため、取得する BID は
+  シグナルのある銘柄（``assets``）に限る。
 
 対応表は必要な日付（カレンダー行の ``match_on`` の日付）ごとに、その日以前で最新のものを
 使う。1つの日付で BID と nri_code が1対1にならない組は、どちらとも決められないため捨てる
-（警告を出す）。GEM3 等で全銘柄を読まないため、取得する BID は対応表にあるものと、
-BID のまま使う銘柄のうちシグナルのあるもの（``assets``）に限る。
+（警告を出す）。
 
 日付: スナップショット（エクスポージャー・共分散）は、目標日（``match_on`` の日付、
 6桁の月なら月末日）以前で最新の Barra の営業日（``_D_FCTRTN`` にある日付）のデータを使う。
@@ -405,7 +406,7 @@ class AssetIds:
     Attributes:
         id_map: nri_code にする BID の対応表。columns=[_target, bid, asset_id]
             （目標日ごと）。``asset_id: bid`` なら空。
-        keep: BID のまま ``asset_id`` にする BID。
+        keep: BID のまま ``asset_id`` にする BID（``asset_id: bid`` のときのシグナルの銘柄）。
     """
 
     id_map: pd.DataFrame
@@ -437,24 +438,19 @@ def load_asset_ids(
     """config の ``asset_id`` に従って、BID を ``asset_id`` にする方法を作る。
 
     Args:
-        asset_id: ``nri_code`` / ``bid`` / ``mixed``。
-        targets: 目標日（8桁）。対応表はこの日付ごとに引く。
-        assets: シグナルのある銘柄の ``asset_id``。BID のまま使う銘柄はこの中から選ぶ。
+        asset_id: ``nri_code`` / ``bid``。
+        targets: 目標日（8桁）。対応表はこの日付ごとに引く（``nri_code`` のとき）。
+        assets: シグナルのある銘柄の ``asset_id``。``bid`` のとき、この BID だけを使う。
         ctx: 読み込みコンテキスト。
         warnings: 警告文を追記するリスト。
 
     Returns:
-        ``AssetIds``。``mixed`` では、``assets`` のうち対応表の BID・nri_code に
-        現れないもの（日本株以外）を BID のまま使う。
+        ``AssetIds``。``nri_code`` なら対応表だけ、``bid`` なら ``assets`` の BID だけを持つ。
     """
     if asset_id == "bid":
         empty = pd.DataFrame(columns=[_TARGET, _BID, ASSET_ID], dtype=str)
         return AssetIds(id_map=empty, keep=frozenset(assets))
-    id_map = load_id_map(targets, ctx, warnings)
-    if asset_id == "nri_code":
-        return AssetIds(id_map=id_map, keep=frozenset())
-    japanese = set(id_map[_BID]) | set(id_map[ASSET_ID])
-    return AssetIds(id_map=id_map, keep=frozenset(set(assets) - japanese))
+    return AssetIds(id_map=load_id_map(targets, ctx, warnings), keep=frozenset())
 
 
 def _attach_targets(df: pd.DataFrame, resolved: Mapping[str, str], targets: Mapping[str, str]):
@@ -703,7 +699,7 @@ def load_exposures(
         factors: ファクター一覧。
         ctx: 読み込みコンテキスト。
         warnings: 警告文を追記するリスト。
-        asset_id: BID の扱い（``nri_code`` / ``bid`` / ``mixed``）。
+        asset_id: BID の扱い（``nri_code`` / ``bid``）。
         assets: シグナルのある銘柄の ``asset_id``（BID のまま使う銘柄を選ぶのに使う）。
 
     Returns:
