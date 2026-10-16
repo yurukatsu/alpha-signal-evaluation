@@ -32,8 +32,8 @@ SQL・単位の換算・銘柄 ID の変換・通貨換算をここに閉じ込�
   シグナルのある銘柄（``assets``）に限る。
 
 対応表は必要な日付（カレンダー行の ``match_on`` の日付）ごとに、その日以前で最新のものを
-使う。1つの日付で BID と nri_code が1対1にならない組は、どちらとも決められないため捨てる
-（警告を出す）。
+使う。1つの日付で BID または nri_code が重複する場合は、BID・nri_code の昇順で最初の1件だけを
+残して1対1にする（警告を出す）。
 
 日付: スナップショット（エクスポージャー・共分散）は、目標日（``match_on`` の日付、
 6桁の月なら月末日）以前で最新の Barra の営業日（``_D_FCTRTN`` にある日付）のデータを使う。
@@ -350,8 +350,9 @@ def load_id_map(targets: Iterable[str], ctx: LoadContext, warnings: list[str]) -
     """目標日ごとの BID → nri_code の対応表を読む。
 
     各目標日について ``barraid_jp`` にある日付のうち目標日以前で最新のもの
-    （``resolve_asof``）の対応を使う。1つの日付の中で BID または nri_code が重複する組は
-    捨て、``warnings`` に警告文を追記する。
+    （``resolve_asof``）の対応を使う。1つの日付の中で BID または nri_code が重複する場合は、
+    BID・nri_code の昇順で最初の1件だけを残し（DB の返す順序によらず同じ結果にするため）、
+    除いた行を ``warnings`` に警告文として追記する。
 
     Args:
         targets: 目標日（8桁）。
@@ -384,17 +385,17 @@ def load_id_map(targets: Iterable[str], ctx: LoadContext, warnings: list[str]) -
             ASSET_ID: _strip(rows["nri_code"]),
         }
     ).dropna()
-    rows = rows.drop_duplicates()
-    ambiguous = rows.duplicated([_RESOLVED, _BID], keep=False) | rows.duplicated(
-        [_RESOLVED, ASSET_ID], keep=False
-    )
-    if ambiguous.any():
-        examples = rows.loc[ambiguous, [_RESOLVED, _BID, ASSET_ID]].head(3).to_dict("records")
+    rows = rows.drop_duplicates().sort_values([_RESOLVED, _BID, ASSET_ID])
+    # 1つの日付で BID・nri_code が重複する場合は、昇順で最初の1件だけを残して1対1にする
+    unique = rows.drop_duplicates([_RESOLVED, _BID]).drop_duplicates([_RESOLVED, ASSET_ID])
+    dropped = rows.drop(index=unique.index)
+    if len(dropped):
+        examples = dropped[[_RESOLVED, _BID, ASSET_ID]].head(3).to_dict("records")
         warnings.append(
-            f"barraid_jp: dropped {int(ambiguous.sum())} rows whose bid / nri_code is not "
-            f"one-to-one on the date (e.g. {examples})"
+            f"barraid_jp: dropped {len(dropped)} rows with a duplicated bid / nri_code on the "
+            f"date, keeping the first by (bid, nri_code) (e.g. {examples})"
         )
-        rows = rows[~ambiguous]
+    rows = unique
     keys = pd.DataFrame({_TARGET: list(resolved), _RESOLVED: list(resolved.values())}, dtype=str)
     return keys.merge(rows, on=_RESOLVED)[[_TARGET, _BID, ASSET_ID]]
 
