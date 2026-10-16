@@ -29,7 +29,9 @@ import pandas as pd
 from scipy.stats import norm
 
 ROOT = Path(__file__).parent / "input"
-START, ALPHA_START, END = "2003-01", "2008-01", "2026-07"  # データを作る期間
+# データを作る期間は FIRST〜END。乱数は START から引く（シグナルの自己相関とユニバースの
+# 入れ替わりを FIRST の時点で定常にするため。START〜FIRST の前月はファイルを作らない）
+START, FIRST, END = "2003-01", "2008-01", "2026-07"
 CALENDAR_START, CALENDAR_END = "1987-12", "2049-12"  # 本番と同じく将来の月まで持つ
 N_IDS = 900
 BM_SIZE = 166
@@ -104,21 +106,22 @@ def generate_all(rng: np.random.Generator) -> None:
     for t, month in enumerate(months):
         univ = (first <= t) & (t <= last)
         cap_t = cap[univ] * np.exp(0.1 * rng.standard_normal(univ.sum()))
+        if month < FIRST.replace("-", ""):
+            continue
         write_weights(ROOT / "univ" / f"{month}.dat", month, ids[univ], cap_t / cap_t.sum())
         top = np.argsort(-cap_t)[:BM_SIZE]
         bm_w = cap_t[top] / cap_t[top].sum()
         write_weights(ROOT / "bm" / f"{month}.dat", month, ids[univ][top], bm_w)
         write_returns(month, ids[univ], total[t, univ], specific[t, univ])
 
-        if month >= ALPHA_START.replace("-", ""):
-            covered = univ & (rng.random(n) < 0.997)
-            # 日付ごとに順位を正規分位点へ変換したスコア（平均 0・対称）
-            rank = pd.Series(alpha[t, covered]).rank().to_numpy()
-            score = norm.ppf(rank / (covered.sum() + 1))
-            lines = ["#bid comp_ew"] + [
-                f"{i} {float(s)!r}" for i, s in zip(ids[covered], score, strict=True)
-            ]
-            (ROOT / "alpha" / f"{month}.dat").write_text("\n".join(lines) + "\n")
+        covered = univ & (rng.random(n) < 0.997)
+        # 日付ごとに順位を正規分位点へ変換したスコア（平均 0・対称）
+        rank = pd.Series(alpha[t, covered]).rank().to_numpy()
+        score = norm.ppf(rank / (covered.sum() + 1))
+        lines = ["#bid comp_ew"] + [
+            f"{i} {float(s)!r}" for i, s in zip(ids[covered], score, strict=True)
+        ]
+        (ROOT / "alpha" / f"{month}.dat").write_text("\n".join(lines) + "\n")
 
 
 def generate_calendar_and_returns(rng: np.random.Generator) -> None:
