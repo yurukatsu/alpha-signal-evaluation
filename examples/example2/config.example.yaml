@@ -55,7 +55,7 @@ returns:
   # 本番（Barra）: 社内 DB の Barra の日次リターン（DRTN / SRTN）を、カレンダーの月ごとに集約する。
   # SQL は不要。% は小数に。銘柄 ID は asset_id で選ぶ（GEMLT / GEM3 の既定は bid: 日本株も含めて
   # BID のまま。このサンプルのように BID のシグナルと一致する）。
-  # .env に接続先 risk_models と fs_trfac_glb の設定が必要（asset_id: bid なら risk_models だけ）。
+  # .env に接続先 risk_models の設定が必要（asset_id: nri_code にする場合は fs_trfac_glb も）。
   # 系列名が上のファイルのリターンと重なるので、使うときはどちらか一方にする（系列名は全ソースで一意）
   # - source: barra
   #   model: GEMLT                 # JPE4 / GEMLT / GEM3
