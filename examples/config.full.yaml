@@ -142,9 +142,9 @@ returns:
 
   # Barra: SQL を書かずに社内 DB の Barra のリターンを読む（data/barra.py。match_on 必須）。
   #   DRTN（取引通貨建てのトータル）→ total、SRTN → specific。日次の % を小数にして期間に集約する。
-  #   asset_id: 銘柄 ID（BID）の扱い。nri_code = barraid_jp で nri_code に変換（対応のない銘柄は捨てる）、
-  #     bid = BID のまま、mixed = 日本株（barraid_jp にある銘柄）は nri_code・それ以外は BID のまま。
-  #     省略時: JPE4 は nri_code、GEMLT / GEM3 は mixed。BID のまま使う銘柄はシグナルのある銘柄だけ取得する。
+  #   asset_id: 銘柄 ID（BID）の扱い。nri_code = barraid_jp で nri_code に変換（対応のない銘柄は捨てる。
+  #     日本株だけのモデル向け）、bid = 日本株も含めて BID のまま（グローバルのモデル向け。シグナルのある
+  #     銘柄だけ取得する）。省略時: JPE4 は nri_code、GEMLT / GEM3 は bid。
   #     接続先は risk_models と fs_trfac_glb（asset_id: bid なら risk_models だけ）
   #   currency: USD なら トータルリターンを日次で USD 建てにする（GEM3 / GEMLT は現地通貨建て）。省略時: local
   #   series: {系列名: total | specific}。省略時: {total: total, specific: specific}
@@ -152,7 +152,7 @@ returns:
     model: GEM3                 # JPE4 / GEMLT / GEM3
     match_on: Trading_day
     currency: USD
-    asset_id: mixed             # 省略時: JPE4 は nri_code、GEMLT / GEM3 は mixed
+    asset_id: bid               # 省略時: JPE4 は nri_code、GEMLT / GEM3 は bid
     series: {gem3_total: total, gem3_specific: specific}
 
 # -----------------------------------------------------------------------------
@@ -205,7 +205,7 @@ risk_models:
     model: GEM3
     match_on: Trading_day
     components: [exposures, factor_covariance, factor_returns]   # 省略時: 3つすべて
-    asset_id: mixed
+    asset_id: bid
     specific_return: gem3_specific
 
 # ポートフォリオ（Brinson・リスク分解の入力）は将来のために予約している。現状は指定するとエラー

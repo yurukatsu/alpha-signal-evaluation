@@ -425,25 +425,28 @@ def test_asset_id_default_depends_on_model():
             .asset_id
         )
 
+    # 日本株だけのモデルは nri_code、日本株を含むグローバルのモデルは BID
     assert asset_id("JPE4") == "nri_code"
-    assert asset_id("GEMLT") == asset_id("GEM3") == "mixed"
+    assert asset_id("GEMLT") == asset_id("GEM3") == "bid"
+    with pytest.raises(ValidationError):
+        EvaluationConfig.model_validate(
+            {"version": 1, "returns": [returns_source(asset_id="mixed")]}
+        )
 
 
-def test_mixed_keeps_bid_for_assets_outside_id_map(world):
-    # JPNA004 は barraid_jp にない（日本株以外）→ BID のまま。日本株は nri_code
-    table = world.fakes["fs_trfac_glb"].tables["barraid_jp"]
-    world.fakes["fs_trfac_glb"].tables["barraid_jp"] = table[table["bid"] != "JPNA004 "]
-    write_signals(world, [*NRI[:3], "JPNA004", "XXX0001"])
+def test_bid_keeps_bids_of_signals_without_id_map(world):
+    # 日本株（barraid_jp にある銘柄）も BID のまま。シグナルにない BID は取得しない
+    write_signals(world, [*BIDS[:3], "XXX0001"])
     cfg = EvaluationConfig.model_validate(
         world.config(
-            returns=[returns_source(asset_id="mixed")],
+            returns=[returns_source(asset_id="bid")],
             risk_models={
                 "m": {
                     "source": "barra",
                     "model": MODEL,
                     "match_on": "Trading_day",
                     "components": ["exposures"],
-                    "asset_id": "mixed",
+                    "asset_id": "bid",
                 }
             },
         )
@@ -451,36 +454,26 @@ def test_mixed_keeps_bid_for_assets_outside_id_map(world):
     bundle = build_bundle(cfg).bundle
 
     total = bundle.forward_returns["total"][1]
-    assert sorted(total.columns) == sorted([*NRI[:3], "JPNA004"])
+    assert list(total.columns) == BIDS[:3]
     key = bundle.dates[0]
     days = world.period_days(world.base.index(key) + 1)
-    expected = (1 + world.drtn.loc[days, "JPNA004"] / 100).prod() - 1
-    assert total.loc[key, "JPNA004"] == pytest.approx(expected)
-    # DB からはシグナルのある BID（と対応表の BID）だけを取る
-    assert queried_bids(world, "D_PRC") == {"JPNA001", "JPNA002", "JPNA003", "JPNA004", "XXX0001"}
+    expected = (1 + world.drtn.loc[days, BIDS[2]] / 100).prod() - 1
+    assert total.loc[key, BIDS[2]] == pytest.approx(expected)
+    assert queried_bids(world, "D_PRC") == {*BIDS[:3], "XXX0001"}
+    assert queried_bids(world, "D_EXP") == {*BIDS[:3], "XXX0001"}
+    assert world.fakes["fs_trfac_glb"].queries == []  # 対応表は読まない
 
     exposures = bundle.risk_models["m"].exposures
-    assert set(exposures.index.get_level_values("asset_id")) == {*NRI[:3], "JPNA004"}
+    assert set(exposures.index.get_level_values("asset_id")) == set(BIDS[:3])
     np.testing.assert_allclose(
-        exposures.loc[(world.base[4], "JPNA004")].to_numpy(),
-        world.exp[world.trading[4]].loc["JPNA004", ["101", "102", "201"]].to_numpy(),
+        exposures.loc[(world.base[4], BIDS[2])].to_numpy(),
+        world.exp[world.trading[4]].loc[BIDS[2], ["101", "102", "201"]].to_numpy(),
     )
-
-
-def test_bid_uses_bids_of_signals_without_id_map(world):
-    write_signals(world, BIDS[:2])
-    cfg = EvaluationConfig.model_validate(
-        world.config(returns=[returns_source(asset_id="bid", series={"total": "total"})])
-    )
-    total = build_bundle(cfg).bundle.forward_returns["total"][1]
-    assert list(total.columns) == BIDS[:2]
-    assert queried_bids(world, "D_PRC") == set(BIDS[:2])
-    assert world.fakes["fs_trfac_glb"].queries == []  # 対応表は読まない
 
 
 def test_bid_does_not_require_id_map_connection(world, monkeypatch, barra_env):
     monkeypatch.delenv("RDS_APP_002_HOST")  # fs_trfac_glb の接続先
     bid = world.config(returns=[returns_source(asset_id="bid")])
     assert not any("fs_trfac_glb" in e for e in validate(bid).errors)
-    mixed = world.config(returns=[returns_source(asset_id="mixed")])
-    assert any("fs_trfac_glb" in e for e in validate(mixed).errors)
+    nri_code = world.config(returns=[returns_source(asset_id="nri_code")])
+    assert any("fs_trfac_glb" in e for e in validate(nri_code).errors)

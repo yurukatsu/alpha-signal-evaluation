@@ -98,7 +98,7 @@ returns:
     model: JPE4
     match_on: Trading_day          # 期間の境界（日次を期間に集約する）
     currency: local                # USD なら トータルリターンを日次で USD 建てにする
-    asset_id: nri_code             # nri_code / bid / mixed（省略時: JPE4 は nri_code、GEMLT / GEM3 は mixed）
+    asset_id: nri_code             # nri_code / bid（省略時: JPE4 は nri_code、GEMLT / GEM3 は bid）
     series: {total: total, specific: specific}   # 省略時もこの2系列
 
 risk_models:
@@ -112,12 +112,11 @@ risk_models:
 
 - 単位は読み込み時に揃える: DRTN / SRTN（1日あたりの %）→ 小数、ファクターリターンは小数のまま、
   共分散（年率の %²）→ 年率の小数²。
-- 銘柄 ID（`asset_id`）は、日本株は nri_code・それ以外は BID が基本。
-  - `nri_code`: BID を `barraid_jp` で nri_code に変換する（`match_on` の日付ごとに、その日以前で最新の対応表）。
-    対応のない銘柄は捨てる。
-  - `bid`: BID のまま使う（`barraid_jp` は読まない）。
-  - `mixed`: 日本株（`barraid_jp` にある銘柄）は nri_code、それ以外は BID のまま。
-  - BID のまま使う銘柄は、シグナルのある銘柄（ユニバース適用後）だけを DB から取得する。
+- 銘柄 ID（`asset_id`）は、日本株だけのモデルは nri_code、日本株を含むグローバルのモデルは BID が基本。
+  - `nri_code`（`JPE4` の既定）: BID を `barraid_jp` で nri_code に変換する（`match_on` の日付ごとに、
+    その日以前で最新の対応表）。対応のない銘柄は捨てる。
+  - `bid`（`GEMLT` / `GEM3` の既定）: 日本株も含めて BID のまま使う。`barraid_jp` は読まず、
+    シグナルのある銘柄（ユニバース適用後）だけを DB から取得する。
   - リスクモデルの `asset_id` はエクスポージャーに使う（意味と既定値は returns と同じ）。
 - エクスポージャー・共分散は `match_on` の日付以前で最新の Barra の営業日のデータを使う。
 - ファクター名は `{model}_FAC` の FAC（`JPE4_` 等の接頭辞を除く）。`factor_groups` は省略すると FGROUP から作る
