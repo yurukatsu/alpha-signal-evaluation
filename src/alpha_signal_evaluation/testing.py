@@ -1,7 +1,9 @@
 """テスト用の合成データ。外部パッケージで metric を作る場合のテストにも使える。
 
 ファイルや DB を用意せずに、時点合わせ済みの ``DataBundle``（シグナル・total / specific の
-フォワードリターン・業種分類・リスクモデル）を乱数から作る。シグナルの一部は将来の
+フォワードリターン・業種分類・リスクモデル・ベンチマークウェイト）を乱数から作る。
+``Metric.requires`` に書けるデータは ``portfolio_weights``（将来用）を除いてすべて持つので、
+どのデータを使う metric でも契約テストを通せる。シグナルの一部は将来の
 リターンを予測するように作ってあるため、IC や分位スプレッドが正になることを確かめる
 テストにも使える。DataBundle は ``pipeline.preprocess.make_bundle()`` で組み立てるので、
 時点合わせは本番と同じ規約（realized）で行われる。
@@ -18,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from .data.bundle import DataBundle, RiskModelData
-from .data.columns import ASSET_ID, CATEGORY, DATE
+from .data.columns import ASSET_ID, CATEGORY, DATE, FACTOR, WEIGHT
 from .pipeline.preprocess import forward_returns, make_bundle
 
 
@@ -48,10 +50,18 @@ def make_synthetic_bundle(
     - シグナルは ``missing_rate`` の割合でランダムに欠損させる（リターンは欠損させない）
     - 分類は ``category`` 列に ``S0``〜``S4``（銘柄ごとに固定）
     - リスクモデル ``barra`` はエクスポージャー（``size`` / ``momentum`` / ``ind_a`` /
-      ``ind_b``）とフォワードファクターリターン（加算）を持つ。``momentum`` は ``alpha`` と
-      正に相関する。``factor_covariance`` / ``specific_risk`` は持たない。
+      ``ind_b``）、ファクター共分散、スペシフィックリスク、フォワードファクターリターン
+      （加算）を持つ。``momentum`` は ``alpha`` と正に相関する。
       ``specific_return="specific"``、``factor_groups`` は ``style`` / ``industry``
-    - ベンチマークウェイト・ユニバースは持たない
+
+      - ファクター共分散: Barra（``source: barra``）と同じ形（index=(date, factor)、
+        columns=ファクター名の正方行列を日付ごとに縦に積んだもの）。値は全行のファクター
+        リターンの標本共分散 × 12（月次 → 年率の小数²）で、全日付で同じ
+      - スペシフィックリスク: index=(date, asset_id)、columns=[specific_risk]。値は
+        スペシフィックリターンの標準偏差の年率（``0.03 * sqrt(12)``）で、全銘柄で同じ
+    - ベンチマークウェイト: index=(date, asset_id)、columns=[weight]。``exp(size)`` に比例し、
+      日付ごとに合計 1（全銘柄）
+    - ユニバース・ポートフォリオウェイトは持たない
 
     Args:
         n_dates: 評価対象のカレンダー行数。
@@ -64,6 +74,7 @@ def make_synthetic_bundle(
         ``DataBundle``。``signals`` は index=(date, asset_id)、columns=[alpha, noise, mixed]。
         ``forward_returns`` は系列名 -> ホライズン -> DataFrame（index=date、
         columns=asset_id、行は評価対象の ``n_dates`` 行）。``risk_models`` は ``{"barra": ...}``。
+        ``benchmark_weights`` は index=(date, asset_id)、columns=[weight]。
 
     Examples:
         >>> bundle = make_synthetic_bundle(n_dates=12, n_assets=20, horizons=(1,))
@@ -146,13 +157,26 @@ def make_synthetic_bundle(
         ],
         axis=1,
     )
+    factors = list(factor_ret.columns)
+    annual_cov = factor_ret.cov() * 12  # 月次 → 年率（小数²）
+    factor_covariance = pd.DataFrame(
+        np.tile(annual_cov.to_numpy(), (n_dates, 1)),
+        index=pd.MultiIndex.from_product([keys[:n_dates], factors], names=[DATE, FACTOR]),
+        columns=pd.Index(factors, name=FACTOR),
+    )
+    specific_risk = long(np.full((n_rows, n_assets), 0.03 * np.sqrt(12)), "specific_risk")
     fwd_factor = forward_returns(factor_ret, list(horizons), "realized", "sum")
     risk_model = RiskModelData(
         exposures=exposures,
+        factor_covariance=factor_covariance,
+        specific_risk=specific_risk.to_frame(),
         forward_factor_returns={
             h: f.reindex(pd.Index(keys[:n_dates], name=DATE)) for h, f in fwd_factor.items()
         },
         specific_return="specific",
         factor_groups={"style": ["size", "momentum"], "industry": ["ind_a", "ind_b"]},
     )
-    return replace(bundle, risk_models={"barra": risk_model})
+
+    cap = long(np.exp(size), WEIGHT)
+    benchmark_weights = (cap / cap.groupby(level=DATE).transform("sum")).to_frame()
+    return replace(bundle, risk_models={"barra": risk_model}, benchmark_weights=benchmark_weights)

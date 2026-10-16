@@ -555,7 +555,10 @@ class RiskModelConfig(_Base):
         exposures: エクスポージャー（YAML ``exposures``、既定 ``None``）。``asset_id`` 以外の
             数値列がファクターになる。
         factor_covariance: ファクター共分散（YAML ``factor_covariance``、既定 ``None``）。
-            現状はソースの形式のまま読み込む。
+            日付ごとの共分散行列を縦に積んだ形で、``factor`` role の列が行のファクター名、
+            ファクター名を列名に持つ数値列が各列。``columns`` に ``factor`` が必要。
+            Barra と同じ形（index=(date, factor)、columns=ファクター名）に揃えて読み込む。
+            値は換算しないので、Barra に合わせて年率の小数²で用意する。
         specific_risk: 固有リスク（YAML ``specific_risk``、既定 ``None``）。
         factor_returns: ファクターリターン（YAML ``factor_returns``、既定 ``None``）。
             期間への集約・フォワードリターンの計算はいずれも加算。

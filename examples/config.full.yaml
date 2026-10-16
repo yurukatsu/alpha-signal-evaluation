@@ -162,11 +162,14 @@ risk_models:
       path: ./input/barra/{Rskmdl_month}/exposure.dat
       read_options: {sep: "\t"}
       columns: {asset_id: code}
-    # ファクター共分散・固有リスク: 現状はソースの形式のまま読み込む
+    # ファクター共分散: 行列を縦に積んだ形（factor 列が行のファクター名、残りの数値列が各列）。
+    # Barra と同じ形（index=(date, factor)、columns=ファクター）に揃える。値は年率の小数²で用意する
     factor_covariance:
       source: file
       path: ./input/barra/{Rskmdl_month}/covariance.dat
       read_options: {sep: "\t"}
+      columns: {factor: factor_name}
+    # 固有リスク: 現状はソースの形式のまま読み込む
     specific_risk:
       source: file
       path: ./input/barra/{Rskmdl_month}/specific_risk.dat

@@ -3,6 +3,7 @@
 import pandas as pd
 import pytest
 
+from alpha_signal_evaluation.data.bundle import REQUIREMENTS
 from alpha_signal_evaluation.metrics import MetricResult, list_metrics
 from alpha_signal_evaluation.metrics.base import MetricParams
 
@@ -43,3 +44,12 @@ def test_declares_contract(name):
 def test_check_passes_for_available_data(name, bundle):
     metric_cls = METRICS[name]
     assert metric_cls.check(metric_cls.Params(), bundle.spec()) == []
+
+
+def test_synthetic_bundle_provides_every_requirement(bundle):
+    # どのデータを requires に書いた metric でも、契約テストを通せるようにする
+    # （portfolio_weights は将来用で、pipeline も設定しない）
+    assert REQUIREMENTS - bundle.spec().provides == {"portfolio_weights"}
+    cov = bundle.risk_models["barra"].factor_covariance
+    assert cov.index.names == ["date", "factor"]
+    assert list(cov.loc[bundle.dates[0]].index) == list(cov.columns)  # 日付ごとに正方行列
