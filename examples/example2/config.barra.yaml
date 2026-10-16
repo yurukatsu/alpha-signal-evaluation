@@ -1,8 +1,8 @@
 # 社内環境用: リターンとリスクモデルを社内 DB の Barra（GEMLT）から読む設定（example2 と同じ入力形式）。
 # input/ には実データの alpha / bm / univ / calendar.dat（BID のシグナル等）を置く。
 # make_sample_data.py の合成データは BID が実在しないため、Barra のリターンと一致しない。
-# 銘柄 ID は asset_id: mixed（GEMLT の既定）: 日本株は nri_code、それ以外は BID のまま。
-# .env に接続先 risk_models と fs_trfac_glb の設定が必要（asset_id: bid なら risk_models だけ）。
+# 銘柄 ID は asset_id: bid（GEMLT の既定）: 日本株も含めて BID のまま（barraid_jp は使わない）。
+# .env に接続先 risk_models の設定が必要。
 #
 #   uv run alpha-eval validate examples/example2/config.barra.yaml
 #   uv run alpha-eval run examples/example2/config.barra.yaml
@@ -50,7 +50,7 @@ returns:
     match_on: Trading_month
     convention: realized
     currency: USD                # トータルリターンを日次で USD 建てにする（local なら取引通貨建て）
-    asset_id: mixed              # 日本株は nri_code、それ以外は BID のまま
+    asset_id: bid                # 日本株も含めて BID のまま（barraid_jp は使わない）
     series: {total: total, specific: specific}
 
 risk_models:
@@ -61,7 +61,7 @@ risk_models:
     model: GEMLT
     match_on: Trading_month
     components: [exposures, factor_covariance, factor_returns]
-    asset_id: mixed
+    asset_id: bid
     specific_return: specific
 
 metrics:
