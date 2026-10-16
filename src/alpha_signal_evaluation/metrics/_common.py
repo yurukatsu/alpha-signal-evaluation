@@ -9,8 +9,9 @@ from typing import Literal, TypeAlias
 import numpy as np
 import pandas as pd
 
-from ..config import Aggregation
+from ..config import Aggregation, ReturnKind
 from ..data.columns import DATE
+from .base import ReturnAggregation
 
 CorrMethod: TypeAlias = Literal["spearman", "pearson"]
 
@@ -122,10 +123,10 @@ def summarize_series(x: pd.Series, horizon: int = 1) -> dict[str, float]:
     }
 
 
-def assign_quantiles(values: pd.Series, n_quantiles: int) -> pd.Series:
-    """日付ごとに 1（最小）〜 n_quantiles（最大）の分位を割り当てる。
+def assign_quantiles(values: pd.Series, n_quantiles: int, by: pd.Series | None = None) -> pd.Series:
+    """日付（と ``by``）ごとに 1（最小）〜 n_quantiles（最大）の分位を割り当てる。
 
-    日付内の順位 ``rank``（``method="first"``: 同順位は出現順で分割）と有効な観測数
+    グループ内の順位 ``rank``（``method="first"``: 同順位は出現順で分割）と有効な観測数
     ``count`` から ``floor((rank - 1) * n_quantiles / count) + 1`` で分位を決める。
     そのため各分位の銘柄数はほぼ均等になる（割り切れない場合は最大 1 銘柄の差）。
 
@@ -133,16 +134,93 @@ def assign_quantiles(values: pd.Series, n_quantiles: int) -> pd.Series:
         values: index に ``date`` レベルを持つ Series（通常 index=(date, asset_id) の
             シグナル値）。
         n_quantiles: 分位数。
+        by: 日付に加えてグループ分けに使う値（例: カテゴリ）。``values`` と同じ index。
+            指定すると日付 × ``by`` の中で分位を割り当てる（カテゴリ中立の分位）。
 
     Returns:
         ``values`` と同じ index の float の Series（1.0 〜 n_quantiles）。値が欠損の行と、
-        有効な観測数が ``n_quantiles`` に満たない日付の行は欠損。
+        有効な観測数が ``n_quantiles`` に満たないグループの行は欠損。
     """
-    g = values.groupby(level=DATE)
+    keys = [values.index.get_level_values(DATE), *([] if by is None else [by])]
+    g = values.groupby(keys)
     rank = g.rank(method="first")
     count = g.transform("count")
     q = np.floor((rank - 1) * n_quantiles / count) + 1
     return q.where(count >= n_quantiles)
+
+
+def quantile_portfolios(
+    df: pd.DataFrame, quantile: pd.Series, n_quantiles: int, dates: pd.Index
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """分位ごとの等ウェイト平均フォワードリターンと、上位 − 下位のスプレッドを求める。
+
+    Args:
+        df: ``DataBundle.aligned`` の出力（index=(date, asset_id)、``forward_return`` 列を持つ）。
+        quantile: ``df`` と同じ index の分位（``assign_quantiles`` の出力）。欠損の行は使わない。
+        n_quantiles: 分位数。
+        dates: 評価対象の全カレンダー行（``wide`` の index）。
+
+    Returns:
+        ``(long, wide)``。
+
+        - ``long``: 日付 × 分位ごとの平均リターン（データのある組だけ）。
+          columns=[date, quantile, mean_return, n]。``quantile`` は int（1..n）、
+          ``n`` はその分位の銘柄数。
+        - ``wide``: index=``dates``、columns=[Q1, ..., Q{n}, spread]。spread = Q{n} − Q1。
+    """
+    df = df.assign(quantile=quantile).dropna()
+    grouped = df.groupby([df.index.get_level_values(DATE), "quantile"])
+    stats = grouped["forward_return"].agg(["mean", "count"])
+    wide = stats["mean"].unstack("quantile").reindex(index=dates)
+    wide = wide.reindex(columns=[float(q) for q in range(1, n_quantiles + 1)])
+    wide.columns = [f"Q{int(q)}" for q in wide.columns]
+    wide["spread"] = wide[f"Q{n_quantiles}"] - wide["Q1"]
+
+    long = stats.reset_index().rename(
+        columns={"level_0": DATE, "mean": "mean_return", "count": "n"}
+    )
+    long["quantile"] = long["quantile"].astype(int)
+    return long, wide
+
+
+def summarize_portfolios(
+    wide: pd.DataFrame, horizon: int, aggregation: ReturnAggregation
+) -> list[dict]:
+    """``quantile_portfolios`` の ``wide`` の各ポートフォリオの時系列を要約する。
+
+    各列について算術平均と幾何平均（:meth:`ReturnAggregation.summarize`）を求め、
+    spread には lag = horizon − 1 の Newey-West t 値と、spread が正の期間の割合も求める。
+
+    Returns:
+        1要素が1ポートフォリオの辞書のリスト。キーは portfolio, arith_mean, geo_mean と、
+        spread だけ t_stat, hit_rate。
+    """
+    rows = []
+    for col in wide.columns:
+        row = {"portfolio": col, **aggregation.summarize(wide[col])}
+        if col == "spread":
+            row["t_stat"] = newey_west_tstat(wide[col], horizon - 1)
+            row["hit_rate"] = float((wide[col].dropna() > 0).mean())
+        rows.append(row)
+    return rows
+
+
+def cumulative_portfolios(
+    wide: pd.DataFrame, kind: ReturnKind, aggregation: ReturnAggregation
+) -> pd.DataFrame:
+    """ポートフォリオ（``wide`` の列）ごとの累積リターンを long 形式で返す。
+
+    累積方法はリターンの kind ごとに ``aggregation`` で決まる。重複のない h = 1 の
+    リターンに使う。
+
+    Returns:
+        columns=[date, portfolio, cumulative_return] の DataFrame。
+    """
+    return (
+        aggregation.cumulate(wide, kind)
+        .reset_index()
+        .melt(id_vars=DATE, var_name="portfolio", value_name="cumulative_return")
+    )
 
 
 def per_period_rate(r: float | pd.Series, horizon: int, method: Aggregation):

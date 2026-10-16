@@ -188,4 +188,4 @@ def test_full_reference_config_is_valid():
     cfg = load_config(path)
     # enabled: false の metric も含めてパラメータを検証する
     assert validate_metrics(cfg.metrics, spec_from_config(cfg)) == []
-    assert len(cfg.metrics) == 7 and len(cfg.enabled_metrics) == 6
+    assert len(cfg.metrics) == 9 and len(cfg.enabled_metrics) == 8

@@ -12,8 +12,10 @@ from ..data.columns import DATE
 from ._common import (
     assign_quantiles,
     concat,
+    cumulative_portfolios,
     flatten_summary,
-    newey_west_tstat,
+    quantile_portfolios,
+    summarize_portfolios,
 )
 from .base import Metric, MetricResult, ReturnAggregation, SignalReturnParams
 from .registry import register_metric
@@ -108,44 +110,18 @@ class QuantileAnalysis(Metric):
                     if p.demean:
                         mean = df.groupby(level=DATE)["forward_return"].transform("mean")
                         df = df.assign(forward_return=df["forward_return"] - mean)
-                    df = df.assign(quantile=assign_quantiles(df[signal], n)).dropna()
-                    grouped = df.groupby([df.index.get_level_values(DATE), "quantile"])
-                    stats = grouped["forward_return"].agg(["mean", "count"])
-                    wide = stats["mean"].unstack("quantile").reindex(index=dates)
-                    wide = wide.reindex(columns=[float(q) for q in range(1, n + 1)])
-                    wide.columns = [f"Q{int(q)}" for q in wide.columns]
-                    wide["spread"] = wide[f"Q{n}"] - wide["Q1"]
+                    quantile = assign_quantiles(df[signal], n)
+                    long, wide = quantile_portfolios(df, quantile, n, dates)
 
                     key = {"signal": signal, "returns": ret, "horizon": h}
-                    long = stats.reset_index().rename(
-                        columns={"level_0": DATE, "mean": "mean_return", "count": "n"}
-                    )
-                    long["quantile"] = long["quantile"].astype(int)
                     returns_rows.append(long.assign(**key))
-
-                    for col in wide.columns:
-                        row = {
-                            **key,
-                            "portfolio": col,
-                            **p.aggregation.summarize(wide[col]),
-                        }
-                        if col == "spread":
-                            row["t_stat"] = newey_west_tstat(wide[col], h - 1)
-                            row["hit_rate"] = float((wide[col].dropna() > 0).mean())
-                        summary.append(row)
-
+                    summary += [
+                        {**key, **row} for row in summarize_portfolios(wide, h, p.aggregation)
+                    ]
                     # 重複のない1期間ホライズンだけ累積リターンを出す
                     if h == 1:
-                        cum = p.aggregation.cumulate(wide, kind)
-                        cumulative_rows.append(
-                            cum.reset_index()
-                            .melt(
-                                id_vars=DATE,
-                                var_name="portfolio",
-                                value_name="cumulative_return",
-                            )
-                            .assign(signal=signal, returns=ret)
-                        )
+                        cum = cumulative_portfolios(wide, kind, p.aggregation)
+                        cumulative_rows.append(cum.assign(signal=signal, returns=ret))
 
         summary = pd.DataFrame(summary)
         spread = summary[summary["portfolio"] == "spread"] if len(summary) else summary
