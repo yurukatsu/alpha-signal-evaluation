@@ -11,6 +11,7 @@
 
 import datetime
 import re
+import warnings
 
 import numpy as np
 import pandas as pd
@@ -490,3 +491,24 @@ def test_bid_does_not_require_id_map_connection(world, monkeypatch, barra_env):
     assert not any("fs_trfac_glb" in e for e in validate(bid).errors)
     nri_code = world.config(returns=[returns_source(asset_id="nri_code")])
     assert any("fs_trfac_glb" in e for e in validate(nri_code).errors)
+
+
+def test_daily_returns_below_minus_one_become_missing(world):
+    # 4月の期間の1日だけ、JPNA001 の DRTN を -150%（ありえない値）にする
+    table = world.fakes["risk_models"].tables[f"{MODEL}_D_PRC"]
+    key = world.base[3]
+    days = world.period_days(world.base.index(key) + 1)
+    bad = (table["DATE"] == int(days[0])) & (table["BID"] == "JPNA001 ")
+    table.loc[bad, "DRTN"] = -150.0
+    cfg = EvaluationConfig.model_validate(world.config(returns=[returns_source()]))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)  # log1p の警告が出ないこと
+        prepared = build_bundle(cfg)
+    assert any(
+        "'total' daily returns: 1 values below -100% treated as missing" in w
+        for w in prepared.warnings
+    )
+    # その日を除いた残りの日で複利にする（期間全体は欠損にしない）
+    total = prepared.bundle.forward_returns["total"][1]
+    expected = (1 + world.drtn.loc[days[1:], "JPNA001"] / 100).prod() - 1
+    assert total.loc[key, NRI[0]] == pytest.approx(expected)

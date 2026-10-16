@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -7,7 +9,7 @@ from alpha_signal_evaluation import ConfigValidationError, evaluate, validate
 from alpha_signal_evaluation.cli import app
 from alpha_signal_evaluation.config import load_config
 from alpha_signal_evaluation.data.loaders import LoadContext
-from alpha_signal_evaluation.pipeline import build_bundle
+from alpha_signal_evaluation.pipeline import build_bundle, make_bundle
 
 
 def test_file_pipeline_is_time_aligned(dataset):
@@ -366,6 +368,50 @@ def test_factor_covariance_file_is_shaped_like_barra(dataset, tmp_path):
     )
     with pytest.raises(ValueError, match="square matrix"):
         build_bundle(load_config(cfg))
+
+
+def test_period_returns_below_minus_one_become_missing(dataset):
+    # 行 5 の銘柄 0 の total を -150%（ありえない値）にする
+    dataset.total[5, 0] = -1.5
+    dataset.write_file_returns()
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)  # log1p の警告が出ないこと
+        prepared = build_bundle(load_config(dataset.write_config()))
+    assert any(
+        "'total' period returns: 1 values below -100% treated as missing" in w
+        for w in prepared.warnings
+    )
+    fwd = prepared.bundle.forward_returns
+    code = dataset.codes[0]
+    # realized: 行 4 の h=1 は行 5 の期間リターン → 欠損。他の銘柄・行はそのまま
+    assert np.isnan(fwd["total"][1].loc[dataset.base[4], code])
+    assert fwd["total"][1].loc[dataset.base[3], code] == pytest.approx(dataset.total[4, 0])
+    assert fwd["total"][1].loc[dataset.base[4], dataset.codes[1]] == pytest.approx(
+        dataset.total[5, 1]
+    )
+    # specific（加算）は検査しない
+    assert fwd["specific"][1].loc[dataset.base[4], code] == pytest.approx(-0.75)
+
+
+def test_make_bundle_drops_returns_below_minus_one(caplog):
+    dates = ["20200131", "20200229", "20200331"]
+    signals = pd.DataFrame(
+        {"s": [1.0, 2.0, 3.0, 4.0]}, index=pd.MultiIndex.from_product([dates[:2], ["A", "B"]])
+    )
+    period = pd.DataFrame({"A": [0.01, -2.0, 0.02], "B": [0.01, 0.03, 0.02]}, index=dates)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        bundle = make_bundle(
+            signals,
+            {"total": period},
+            return_kinds={"total": "total"},
+            horizons=[1],
+            dates=dates[:2],
+        )
+    fwd = bundle.forward_returns["total"][1]
+    assert np.isnan(fwd.loc["20200131", "A"])  # 行 1 の -200% は欠損
+    assert fwd.loc["20200131", "B"] == pytest.approx(0.03)
+    assert "below -100% treated as missing" in caplog.text
 
 
 class MultiQueryDB(FakeDB):
