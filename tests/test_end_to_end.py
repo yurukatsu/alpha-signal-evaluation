@@ -249,7 +249,7 @@ def test_parallel_matches_serial(bundle):
 def test_api_with_data_rejects_missing_requirements(bundle):
     with pytest.raises(ConfigValidationError, match="classification"):
         evaluate(
-            {"version": 1, "metrics": [{"name": "category"}]},
+            {"version": 1, "metrics": [{"name": "category_ic"}]},
             data=bundle.restrict({"signals", "forward_returns"}),
         )
 

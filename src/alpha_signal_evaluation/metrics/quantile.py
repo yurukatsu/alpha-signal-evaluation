@@ -46,7 +46,7 @@ class QuantileParams(SignalReturnParams):
 
 
 @register_metric
-class QuantileAnalysis(Metric):
+class QuantilePerformance(Metric):
     """分位ポートフォリオ（等ウェイト）のフォワードリターンと、上位 − 下位のスプレッド。
 
     シグナル × リターン系列 × ホライズンの組ごとに、``data.aligned`` で取り出した

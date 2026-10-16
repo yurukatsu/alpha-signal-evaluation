@@ -520,7 +520,7 @@ class DataConfig(_Base):
             1ソースならリストにせず dict で書いてもよい（内部では常にリスト）。
             シグナル名は全ソースで一意である必要がある。
         classification: 業種等の分類ソース（YAML ``data.classification``、既定 ``None``）。
-            ``category`` metric 等で使う。
+            ``category_ic`` などのカテゴリ別 metric で使う。
     """
 
     # 単一ソースでもリストでも書ける。内部では常にリスト
