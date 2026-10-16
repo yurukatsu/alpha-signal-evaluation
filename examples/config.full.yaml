@@ -118,6 +118,8 @@ benchmark:
 # kind:       total（複利で集約）/ specific（加算で集約）。期間内の集約方法は kind から決まる
 # convention: realized（行 t のリターン = 行 t-1 → t の実現リターン）/ forward（行 t → t+1）。
 #             省略時: realized。行 t のシグナルに対し、realized なら行 t+1〜t+h、forward なら行 t〜t+h-1 を束ねる
+# valid_range: [下限, 上限]（両端を含む）。範囲外の値（DB / Barra は日次、ファイルは期間の値）は
+#             データの誤りとして欠損にし、警告する。省略時: [-1, 10]（-100% 〜 +1000%）。下限は -1 以上
 # -----------------------------------------------------------------------------
 returns:
   # DB: 日次で1クエリにまとめて取得し、カレンダー期間に集約する（match_on 必須）。
@@ -128,6 +130,7 @@ returns:
     match_on: Trading_day
     convention: realized
     columns: {date: dt, asset_id: code}
+    valid_range: [-1, 10]       # 省略時と同じ。分割・併合が未反映のデータなら上限を厳しくする等
     series:
       total:    {column: ret,  kind: total}
       specific: {column: sret, kind: specific}

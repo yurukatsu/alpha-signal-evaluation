@@ -35,8 +35,8 @@ metrics 側では一切時点をずらさない。loaders（``data/loaders.py``�
     欠損は 0 埋めしない。期間内の日次リターンが全て欠損の期間、ホライズンの途中に
     欠損を含むフォワードリターン、カレンダー末尾を超えるフォワードリターンは
     すべて NaN になる（期間内の一部の日だけが欠損の場合はその日を除いて集約する）。
-    複利で束ねるリターン（total）の -100% 未満の値はデータの誤りとみなして欠損にし、
-    件数と例を警告する（``_drop_below_minus_one``）。
+    リターンのソースの ``valid_range``（既定 -100% 〜 +1000%）の外の値は、データの誤り
+    （DB の特殊値など）とみなして欠損にし、件数と例を警告する（``_drop_out_of_range``）。
 """
 
 import logging
@@ -48,6 +48,7 @@ import pandas as pd
 
 from ..config import (
     AGGREGATION_BY_KIND,
+    DEFAULT_VALID_RANGE,
     Aggregation,
     BarraReturnsSource,
     BarraRiskModelConfig,
@@ -60,6 +61,7 @@ from ..config import (
     ReturnKind,
     ReturnsDBSource,
     RiskModelConfig,
+    check_valid_range,
 )
 from ..data import barra
 from ..data.bundle import DataBundle, RiskModelData
@@ -441,32 +443,39 @@ def _period_boundaries(plan: EvaluationPlan, match_on: str) -> pd.Series:
     return boundaries.map(period_end_day)
 
 
-def _drop_below_minus_one(
-    wide: pd.DataFrame, what: str, method: Aggregation, warnings: list[str]
+def _drop_out_of_range(
+    wide: pd.DataFrame,
+    what: str,
+    valid_range: tuple[float, float] | None,
+    warnings: list[str],
 ) -> pd.DataFrame:
-    """複利で束ねるリターンのうち -100% 未満（-1 未満）の値を欠損にし、警告文を追記する。
+    """有効範囲 ``valid_range``（両端を含む）の外のリターンを欠損にし、警告文を追記する。
 
-    -100% 未満のリターンはありえない（DB の特殊値や単位の誤りなど）うえ、複利の計算
-    （``log1p``）ができないため、データの誤りとして欠損にする。加算（``sum``）で束ねる
-    リターンはそのまま返す。
+    範囲外の値は DB の特殊値・単位の誤りなどのデータの誤りとみなす（統計的な外れ値の
+    処理ではない）。下限は config で -1 以上に制限しているため、複利の計算（``log1p``）に
+    -100% 未満の値は渡らない。
 
     Args:
         wide: リターン（index=date、columns=銘柄）。
         what: 警告文に入れるデータの名前（例: ``"'total' daily returns"``）。
-        method: 束ね方。``compound`` のときだけ検査する。
+        valid_range: ``(下限, 上限)``。``None`` なら検査しない（ファクターリターン等）。
         warnings: 警告文を追記するリスト。
 
     Returns:
-        -1 未満の値を欠損にした ``wide``（該当がなければ ``wide`` そのもの）。
+        範囲外の値を欠損にした ``wide``（該当がなければ ``wide`` そのもの）。
     """
-    if method != "compound":
+    if valid_range is None:
         return wide
-    bad = wide < -1
+    lower, upper = valid_range
+    bad = (wide < lower) | (wide > upper)
     n_bad = int(bad.to_numpy().sum())
     if not n_bad:
         return wide
     examples = [f"{d} {a}: {v:.4g}" for (d, a), v in wide.where(bad).stack().dropna()[:3].items()]
-    warnings.append(f"{what}: {n_bad} values below -100% treated as missing (e.g. {examples})")
+    warnings.append(
+        f"{what}: {n_bad} values outside [{lower:g}, {upper:g}] treated as missing "
+        f"(e.g. {examples})"
+    )
     return wide.mask(bad)
 
 
@@ -477,16 +486,17 @@ def _aggregate_daily(
     values: Mapping[str, tuple[str, Aggregation]],
     convention: Convention,
     warnings: list[str],
+    valid_range: tuple[float, float] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """日次の long 形式を ``values`` の列ごとに wide にし、``to_period_returns`` で集約する。
 
-    複利で束ねる列は、先に -100% 未満の日次値を欠損にする（``_drop_below_minus_one``）。
+    ``valid_range`` の外の日次値は、集約の前に欠損にする（``_drop_out_of_range``）。
     """
     daily_index = sorted(daily[DATE].unique())
     out = {}
     for name, (col, method) in values.items():
         wide = _to_wide(daily, columns, col, daily_index)
-        wide = _drop_below_minus_one(wide, f"{name!r} daily returns", method, warnings)
+        wide = _drop_out_of_range(wide, f"{name!r} daily returns", valid_range, warnings)
         out[name] = to_period_returns(wide, boundaries, convention, method)
     return out
 
@@ -519,6 +529,7 @@ def _load_period_frames(
     convention: Convention,
     warnings: list[str] | None = None,
     assets: Collection[str] = (),
+    valid_range: tuple[float, float] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """延長行の期間データを読み、values の各列を wide（行=延長行）に変換する。
 
@@ -545,6 +556,8 @@ def _load_period_frames(
         convention: DB の日次→期間集約で使う規約（``realized`` / ``forward``）。
         warnings: 警告文を追記するリスト（Barra ソースで使う）。
         assets: シグナルのある銘柄（Barra ソースで BID のまま使う銘柄を選ぶのに使う）。
+        valid_range: リターンの有効範囲。範囲外の値（DB は日次、ファイルは期間の値）を
+            欠損にする。``None`` なら検査しない。
 
     Returns:
         出力名 -> 期間データ。index=date（延長行のキー、延長行と同じ順序・同じ数）、
@@ -571,13 +584,15 @@ def _load_period_frames(
             )
         else:
             daily = load_daily(source, start, end, ctx, required_roles)
-        return _aggregate_daily(daily, boundaries, columns, values, convention, warnings)
+        return _aggregate_daily(
+            daily, boundaries, columns, values, convention, warnings, valid_range
+        )
     df = load_snapshot(source, plan.ext_rows, ctx, required_roles, plan.optional_keys)
     return {
-        name: _drop_below_minus_one(
-            _to_wide(df, columns, col, keys), f"{name!r} period returns", method, warnings
+        name: _drop_out_of_range(
+            _to_wide(df, columns, col, keys), f"{name!r} period returns", valid_range, warnings
         )
-        for name, (col, method) in values.items()
+        for name, (col, _) in values.items()
     }
 
 
@@ -595,7 +610,7 @@ class PreparedData:
         plan: 使用した EvaluationPlan（評価行・延長行の確認用）。
         warnings: データ準備中の警告文（英語）。カレンダー末尾の不足、リスクモデルの
             ``specific_return`` 未設定、シグナルとリターンの銘柄の一致率が低い場合、
-            -100% 未満のリターンを欠損にした場合など。
+            有効範囲外のリターンを欠損にした場合など。
             いずれも ``logger.warning`` にも出力済み。
     """
 
@@ -992,6 +1007,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                 convention=source.convention,
                 warnings=warnings,
                 assets=assets,
+                valid_range=source.valid_range,
             )
             for name, period in periods.items():
                 method = AGGREGATION_BY_KIND[source.series[name].kind]
@@ -1024,6 +1040,7 @@ def make_bundle(
     return_kinds: Mapping[str, ReturnKind],
     horizons: list[int],
     convention: Convention = "realized",
+    valid_range: tuple[float, float] = DEFAULT_VALID_RANGE,
     classification: pd.DataFrame | None = None,
     universe: pd.MultiIndex | pd.DataFrame | None = None,
     dates: list[str] | None = None,
@@ -1042,8 +1059,8 @@ def make_bundle(
     リターンは ``dates`` に reindex し、columns の名前を ``asset_id`` にする。
 
     date・asset_id の型や書式は正規化しないので、シグナルと期間リターンで揃えて
-    おくこと（例: 銘柄コードを両方 str にする）。複利で束ねる系列（total）の -100% 未満の
-    値は欠損にし、``logger.warning`` で警告する（``build_bundle`` と同じ）。
+    おくこと（例: 銘柄コードを両方 str にする）。``valid_range`` の外の期間リターンは
+    欠損にし、``logger.warning`` で警告する（``build_bundle`` と同じ）。
     リスクモデルとベンチマークウェイトは設定されない。
 
     Args:
@@ -1056,6 +1073,8 @@ def make_bundle(
         horizons: ホライズン（行数、正の整数）。
         convention: 期間リターンの規約（realized: 行 t は t-1→t の実現リターン）。
             forward なら行 t は t→t+1 のリターン。
+        valid_range: 期間リターンの有効範囲 ``(下限, 上限)``（両端を含む、既定 ``(-1, 10)``）。
+            範囲外の値は欠損にする。下限は -1 以上。
         classification: index=(date, asset_id)、columns=[category, ...]。
             レベル名を付け替える以外はそのまま使う。
         universe: 評価対象の (date, asset_id)。指定時はシグナルをこの範囲に絞る。
@@ -1067,7 +1086,8 @@ def make_bundle(
         DataBundle。``return_kinds`` は ``period_returns`` にある系列だけを持つ。
 
     Raises:
-        ValueError: ``period_returns`` のいずれかに ``dates`` の日付がない場合。
+        ValueError: ``period_returns`` のいずれかに ``dates`` の日付がない場合、または
+            ``valid_range`` の下限が -1 未満か上限以上の場合。
         KeyError: ``return_kinds`` に ``period_returns`` の系列名がない場合。
 
     Examples:
@@ -1089,6 +1109,7 @@ def make_bundle(
         signals = signals[signals.index.isin(members)]
     if dates is None:
         dates = sorted(signals.index.get_level_values(DATE).unique())
+    check_valid_range(valid_range)
     fwd = {}
     warnings: list[str] = []
     for name, period in period_returns.items():
@@ -1096,8 +1117,8 @@ def make_bundle(
         if missing:
             raise ValueError(f"period_returns[{name!r}] is missing dates: {sorted(missing)[:5]}")
         method = AGGREGATION_BY_KIND[return_kinds[name]]
-        period = _drop_below_minus_one(
-            period.sort_index(), f"{name!r} period returns", method, warnings
+        period = _drop_out_of_range(
+            period.sort_index(), f"{name!r} period returns", valid_range, warnings
         )
         by_h = forward_returns(period, horizons, convention, method)
         fwd[name] = {}
