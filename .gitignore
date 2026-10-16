@@ -236,7 +236,7 @@ input.zip
 namdb-*.zip
 /input/
 
-# Examples: example ブランチでは生成したサンプルデータ（input/）と結果（output/）も追跡する。
-# DB のキャッシュと、実行環境の絶対パスを含む run_info.json は追跡しない
+# Examples: example ブランチでは生成したサンプルデータ（input/）を追跡する。
+# 結果（output/）と DB のキャッシュは追跡しない
 examples/*/.cache/
-examples/*/output/run_info.json
+examples/*/output/
