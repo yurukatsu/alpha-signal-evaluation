@@ -13,7 +13,7 @@ EXAMPLES = Path(__file__).parents[1] / "examples"
 
 @pytest.mark.parametrize(
     ("example", "model", "asset_id"),
-    [("example1", "JPE4", "nri_code"), ("example2", "GEMLT", "mixed")],
+    [("example1", "JPE4", "nri_code"), ("example2", "GEMLT", "bid")],
 )
 def test_barra_config_is_valid(example, model, asset_id):
     cfg = load_config(EXAMPLES / example / "config.barra.yaml")

@@ -376,19 +376,20 @@ BarraModel: TypeAlias = Literal["JPE4", "GEMLT", "GEM3"]
 BarraComponent: TypeAlias = Literal["exposures", "factor_covariance", "factor_returns"]
 Currency: TypeAlias = Literal["local", "USD"]
 # Barra の銘柄 ID（BID）を asset_id にする方法。nri_code は barraid_jp で nri_code にする
-# （対応のない銘柄は捨てる）、bid は BID のまま、mixed は日本株（barraid_jp にある銘柄）は
-# nri_code、それ以外は BID のまま
-BarraAssetId: TypeAlias = Literal["nri_code", "bid", "mixed"]
+# （対応のない銘柄は捨てる。日本株だけのモデル向け）、bid は BID のまま（日本株を含む
+# グローバルのモデル向け）
+BarraAssetId: TypeAlias = Literal["nri_code", "bid"]
 
 
 def _default_barra_asset_id(data: Any) -> Any:
     """Barra のソースの ``asset_id`` の既定値を、モデルから決めて埋める。
 
-    日本株のモデル（``JPE4``）は ``nri_code``、グローバルのモデル（``GEMLT`` / ``GEM3``）は
-    ``mixed``（日本株は nri_code、それ以外は BID）。dict 以外や指定済みならそのまま返す。
+    日本株だけのモデル（``JPE4``）は ``nri_code``、日本株を含むグローバルのモデル
+    （``GEMLT`` / ``GEM3``）は ``bid``（日本株も BID のまま）。dict 以外や指定済みなら
+    そのまま返す。
     """
     if isinstance(data, dict) and data.get("asset_id") is None:
-        return {**data, "asset_id": "nri_code" if data.get("model") == "JPE4" else "mixed"}
+        return {**data, "asset_id": "nri_code" if data.get("model") == "JPE4" else "bid"}
     return data
 
 
@@ -430,10 +431,9 @@ class BarraReturnsSource(_Base):
             kind は ``total``（DRTN）または ``specific``（SRTN）。系列名は全リターンソースで
             一意である必要がある。
         asset_id: 銘柄 ID（BID）の扱い（YAML ``asset_id``、既定はモデルで決まり ``JPE4`` は
-            ``nri_code``、``GEMLT`` / ``GEM3`` は ``mixed``）。``nri_code`` は barraid_jp で
-            nri_code にし（対応のない銘柄は捨てる）、``bid`` は BID のまま、``mixed`` は日本株
-            （barraid_jp にある銘柄）を nri_code、それ以外を BID のままにする。BID のまま使う
-            銘柄は、シグナルのある銘柄だけを取得する。
+            ``nri_code``、``GEMLT`` / ``GEM3`` は ``bid``）。``nri_code`` は barraid_jp で
+            nri_code にし（対応のない銘柄は捨てる）、``bid`` は日本株も含めて BID のまま使う
+            （barraid_jp は読まず、シグナルのある銘柄だけを取得する）。
     """
 
     source: Literal["barra"]
@@ -641,7 +641,7 @@ class BarraRiskModelConfig(_Base):
             既定 ``None`` = FGROUP から自動で作る）。
         asset_id: エクスポージャーの銘柄 ID（BID）の扱い（YAML ``asset_id``）。
             ``BarraReturnsSource.asset_id`` と同じ（既定は ``JPE4`` が ``nri_code``、
-            それ以外は ``mixed``）。
+            それ以外は ``bid``）。
     """
 
     source: Literal["barra"]
