@@ -2,7 +2,7 @@
 
 確認すること:
 - 単位（DRTN / SRTN の % → 小数、共分散の %² → 小数²）と期間集約（total は複利、specific は加算）
-- BID → nri_code の変換（末尾の空白、日付ごとの対応表、1対1でない組の除外）
+- BID → nri_code の変換（末尾の空白、日付ごとの対応表、重複の除去）
 - USD 換算（_IDTY の有効期間で通貨を引き、_D_RATE の変化率を掛ける）
 - スナップショットの日付（目標日に Barra のデータがなければ、その前の営業日）
 - ファクター名（MDL の接頭辞を除く）とグループ、共分散の対称化
@@ -335,19 +335,32 @@ def test_evaluate_with_barra(world, barra_env):
     assert "BANKS" not in matrix.columns
 
 
-def test_id_map_drops_ambiguous_pairs(world):
+def test_id_map_drops_duplicates_keeping_the_first(world):
     table = world.fakes["fs_trfac_glb"].tables["barraid_jp"]
     day = datetime.date(2020, 3, 2)
-    extra = pd.DataFrame([{"date": day, "nri_code": "9999", "bid": "JPNA001"}])
-    world.fakes["fs_trfac_glb"].tables["barraid_jp"] = pd.concat([table, extra])
+    extra = pd.DataFrame(
+        [
+            {"date": day, "nri_code": "9999", "bid": "JPNA001"},  # BID の重複
+            {"date": day, "nri_code": "0002", "bid": "JPNA000"},  # nri_code の重複
+        ]
+    )
+    # DB の返す順序によらないことを確かめるため、追加の行を先頭に置く
+    world.fakes["fs_trfac_glb"].tables["barraid_jp"] = pd.concat([extra, table])
 
     warnings = []
     with LoadContext(calendar=None) as ctx:
         got = barra.load_id_map(["20200302", "20200303"], ctx, warnings)
-    on_day = got[got["_target"] == "20200302"]
-    assert set(on_day["asset_id"]) == {"0002", "0003", "A004"}  # 0001 と 9999 は捨てる
+    on_day = got[got["_target"] == "20200302"].set_index("bid")["asset_id"]
+    # (bid, nri_code) の昇順で最初の1件を残す: JPNA001 → 0001（9999 を除く）、
+    # 0002 → JPNA000（JPNA002 を除く）
+    assert on_day.to_dict() == {
+        "JPNA000": "0002",
+        "JPNA001": "0001",
+        "JPNA003": "0003",
+        "JPNA004": "A004",
+    }
     assert len(got[got["_target"] == "20200303"]) == 4
-    assert any("one-to-one" in w for w in warnings)
+    assert any("dropped 2 rows with a duplicated bid / nri_code" in w for w in warnings)
 
 
 def test_resolve_asof():
