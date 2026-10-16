@@ -35,6 +35,8 @@ metrics 側では一切時点をずらさない。loaders（``data/loaders.py``�
     欠損は 0 埋めしない。期間内の日次リターンが全て欠損の期間、ホライズンの途中に
     欠損を含むフォワードリターン、カレンダー末尾を超えるフォワードリターンは
     すべて NaN になる（期間内の一部の日だけが欠損の場合はその日を除いて集約する）。
+    複利で束ねるリターン（total）の -100% 未満の値はデータの誤りとみなして欠損にし、
+    件数と例を警告する（``_drop_below_minus_one``）。
 """
 
 import logging
@@ -439,21 +441,54 @@ def _period_boundaries(plan: EvaluationPlan, match_on: str) -> pd.Series:
     return boundaries.map(period_end_day)
 
 
+def _drop_below_minus_one(
+    wide: pd.DataFrame, what: str, method: Aggregation, warnings: list[str]
+) -> pd.DataFrame:
+    """複利で束ねるリターンのうち -100% 未満（-1 未満）の値を欠損にし、警告文を追記する。
+
+    -100% 未満のリターンはありえない（DB の特殊値や単位の誤りなど）うえ、複利の計算
+    （``log1p``）ができないため、データの誤りとして欠損にする。加算（``sum``）で束ねる
+    リターンはそのまま返す。
+
+    Args:
+        wide: リターン（index=date、columns=銘柄）。
+        what: 警告文に入れるデータの名前（例: ``"'total' daily returns"``）。
+        method: 束ね方。``compound`` のときだけ検査する。
+        warnings: 警告文を追記するリスト。
+
+    Returns:
+        -1 未満の値を欠損にした ``wide``（該当がなければ ``wide`` そのもの）。
+    """
+    if method != "compound":
+        return wide
+    bad = wide < -1
+    n_bad = int(bad.to_numpy().sum())
+    if not n_bad:
+        return wide
+    examples = [f"{d} {a}: {v:.4g}" for (d, a), v in wide.where(bad).stack().dropna()[:3].items()]
+    warnings.append(f"{what}: {n_bad} values below -100% treated as missing (e.g. {examples})")
+    return wide.mask(bad)
+
+
 def _aggregate_daily(
     daily: pd.DataFrame,
     boundaries: pd.Series,
     columns: str,
-    values: Mapping[str, tuple[str, str]],
+    values: Mapping[str, tuple[str, Aggregation]],
     convention: Convention,
+    warnings: list[str],
 ) -> dict[str, pd.DataFrame]:
-    """日次の long 形式を ``values`` の列ごとに wide にし、``to_period_returns`` で集約する。"""
+    """日次の long 形式を ``values`` の列ごとに wide にし、``to_period_returns`` で集約する。
+
+    複利で束ねる列は、先に -100% 未満の日次値を欠損にする（``_drop_below_minus_one``）。
+    """
     daily_index = sorted(daily[DATE].unique())
-    return {
-        name: to_period_returns(
-            _to_wide(daily, columns, col, daily_index), boundaries, convention, method
-        )
-        for name, (col, method) in values.items()
-    }
+    out = {}
+    for name, (col, method) in values.items():
+        wide = _to_wide(daily, columns, col, daily_index)
+        wide = _drop_below_minus_one(wide, f"{name!r} daily returns", method, warnings)
+        out[name] = to_period_returns(wide, boundaries, convention, method)
+    return out
 
 
 def _forward_on_eval_rows(
@@ -520,6 +555,7 @@ def _load_period_frames(
             (date, ``columns``) が重複する場合。
     """
     keys = plan.ext_keys
+    warnings = [] if warnings is None else warnings
     if isinstance(source, DBSource | BarraReturnsSource):
         start, end = _db_range(plan, source.match_on)
         boundaries = _period_boundaries(plan, source.match_on)
@@ -530,14 +566,19 @@ def _load_period_frames(
                 end,
                 boundaries.tolist(),
                 ctx,
-                [] if warnings is None else warnings,
+                warnings,
                 assets=assets,
             )
         else:
             daily = load_daily(source, start, end, ctx, required_roles)
-        return _aggregate_daily(daily, boundaries, columns, values, convention)
+        return _aggregate_daily(daily, boundaries, columns, values, convention, warnings)
     df = load_snapshot(source, plan.ext_rows, ctx, required_roles, plan.optional_keys)
-    return {name: _to_wide(df, columns, col, keys) for name, (col, _) in values.items()}
+    return {
+        name: _drop_below_minus_one(
+            _to_wide(df, columns, col, keys), f"{name!r} period returns", method, warnings
+        )
+        for name, (col, method) in values.items()
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -553,7 +594,8 @@ class PreparedData:
         bundle: metrics に渡す時点合わせ済みのデータ。
         plan: 使用した EvaluationPlan（評価行・延長行の確認用）。
         warnings: データ準備中の警告文（英語）。カレンダー末尾の不足、リスクモデルの
-            ``specific_return`` 未設定、シグナルとリターンの銘柄の一致率が低い場合など。
+            ``specific_return`` 未設定、シグナルとリターンの銘柄の一致率が低い場合、
+            -100% 未満のリターンを欠損にした場合など。
             いずれも ``logger.warning`` にも出力済み。
     """
 
@@ -683,7 +725,8 @@ def _load_barra_risk_model(
         boundaries = _period_boundaries(plan, model.match_on)
         daily = barra.load_factor_returns_daily(model.model, start, end, factors, ctx, warnings)
         values = {FACTOR: (VALUE, "sum")}
-        period = _aggregate_daily(daily, boundaries, FACTOR, values, model.convention)[FACTOR]
+        period = _aggregate_daily(daily, boundaries, FACTOR, values, model.convention, warnings)
+        period = period[FACTOR]
         period = period[[f for f in factors.order if f in period.columns]]
         forward_factor = _forward_on_eval_rows(period, plan, model.convention, "sum")
     return RiskModelData(
@@ -999,8 +1042,9 @@ def make_bundle(
     リターンは ``dates`` に reindex し、columns の名前を ``asset_id`` にする。
 
     date・asset_id の型や書式は正規化しないので、シグナルと期間リターンで揃えて
-    おくこと（例: 銘柄コードを両方 str にする）。リスクモデルとベンチマーク
-    ウェイトは設定されない。
+    おくこと（例: 銘柄コードを両方 str にする）。複利で束ねる系列（total）の -100% 未満の
+    値は欠損にし、``logger.warning`` で警告する（``build_bundle`` と同じ）。
+    リスクモデルとベンチマークウェイトは設定されない。
 
     Args:
         signals: index=(date, asset_id)、columns=シグナル名。
@@ -1046,21 +1090,23 @@ def make_bundle(
     if dates is None:
         dates = sorted(signals.index.get_level_values(DATE).unique())
     fwd = {}
+    warnings: list[str] = []
     for name, period in period_returns.items():
         missing = set(dates) - set(period.index)
         if missing:
             raise ValueError(f"period_returns[{name!r}] is missing dates: {sorted(missing)[:5]}")
-        by_h = forward_returns(
-            period.sort_index(),
-            horizons,
-            convention,
-            AGGREGATION_BY_KIND[return_kinds[name]],
+        method = AGGREGATION_BY_KIND[return_kinds[name]]
+        period = _drop_below_minus_one(
+            period.sort_index(), f"{name!r} period returns", method, warnings
         )
+        by_h = forward_returns(period, horizons, convention, method)
         fwd[name] = {}
         for h, f in by_h.items():
             f = f.reindex(pd.Index(dates, name=DATE))
             f.columns.name = ASSET_ID
             fwd[name][h] = f
+    for w in warnings:
+        logger.warning(w)
     if classification is not None:
         classification = classification.copy()
         classification.index = classification.index.set_names([DATE, ASSET_ID])
