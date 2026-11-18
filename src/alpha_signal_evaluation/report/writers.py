@@ -7,21 +7,28 @@ report 層のうち出力形式だけを扱うモジュール。``EvaluationRepo
   （key は metric のキー、table は ``MetricResult.tables`` のキー）
 - ``summary.parquet`` / ``summary.csv``: 全 metric の summary（long 形式）
 - ``report.xlsx``: summary・status シートと、各テーブルを1シートずつ
-- ``run_info.json``: 作成日時・成否・状態・エラー・警告・注記・config（常に書く）
+- ``run_info.json``: 作成日時・実行の状態（``state`` / ``pending``）・成否・metric ごとの
+  状態・エラー・警告・注記・config（常に書く）
 - ``by_date/<date>/``: 日付ごとの断面（``by_date`` を指定した場合のみ）。その日付の行だけを
   切り出したテーブルを、上と同じ ``<key>/<table>.<ext>`` / ``report.xlsx`` の形で書く
 
 csv は Excel で開いても日本語が文字化けしないよう UTF-8 の BOM 付き（``utf-8-sig``）で
 書く。テーブルの index は RangeIndex でなければ列として書き出す。
+
+どのファイルも同じディレクトリの一時ファイル（``.tmp-<名前>``）に書いてから置き換える。
+書いている途中でプロセスが落ちても、既にあるファイルが壊れた状態で残らない
+（強制終了の場合は一時ファイルが残ることがある）。
 """
 
 import json
 import logging
+import os
 import re
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import pandas as pd
 
@@ -40,6 +47,24 @@ _UNSAFE_DIR_CHAR = re.compile(r"[^0-9A-Za-z_-]")
 
 # (metric のキー, テーブル名, DataFrame)
 TableItem: TypeAlias = tuple[str, str, pd.DataFrame]
+# 実行の状態。running = 実行中・書き出し中（このまま残っていれば強制終了された）、
+# finished = 全 metric を実行し、すべて書き終えた、aborted = 例外や Ctrl-C で中断した
+RunState: TypeAlias = Literal["running", "finished", "aborted"]
+
+
+@contextmanager
+def _atomic(path: Path) -> Iterator[Path]:
+    """``path`` と同じディレクトリの一時ファイルのパスを渡し、正常に抜けたら ``path`` に置き換える。
+
+    一時ファイルは ``.tmp-<名前>``（拡張子は元のまま）。例外で抜けた場合は一時ファイルを
+    消し、``path`` は元のまま残す。
+    """
+    tmp = path.with_name(f".tmp-{path.name}")
+    try:
+        yield tmp
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _tables(report: "EvaluationReport"):
@@ -57,10 +82,11 @@ def _has_index(table: pd.DataFrame) -> bool:
 
 def _write_table(table: pd.DataFrame, path: Path, fmt: str, index: bool) -> None:
     """1つのテーブルを parquet、または csv（UTF-8、BOM 付き）で ``path`` に書く。"""
-    if fmt == "parquet":
-        table.to_parquet(path, index=index)
-    else:
-        table.to_csv(path, index=index, encoding=_CSV_ENCODING)
+    with _atomic(path) as tmp:
+        if fmt == "parquet":
+            table.to_parquet(tmp, index=index)
+        else:
+            table.to_csv(tmp, index=index, encoding=_CSV_ENCODING)
 
 
 def _write_files(tables: Iterable[TableItem], directory: Path, fmt: str) -> None:
@@ -106,7 +132,7 @@ def _write_xlsx(
     path = directory / "report.xlsx"
     front = front or {}
     used = set(front)
-    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+    with _atomic(path) as tmp, pd.ExcelWriter(tmp, engine="openpyxl") as writer:
         for sheet, frame in front.items():
             frame.to_excel(writer, sheet_name=sheet, index=False)
         for key, name, table in tables:
@@ -117,32 +143,56 @@ def _write_xlsx(
             table.to_excel(writer, sheet_name=sheet, index=_has_index(table))
 
 
-def _write_run_info(report: "EvaluationReport", directory: Path) -> None:
+def write_run_info(
+    report: "EvaluationReport",
+    directory: Path,
+    state: RunState = "finished",
+    pending: Iterable[str] = (),
+) -> None:
     """実行情報を ``<directory>/run_info.json``（UTF-8、インデント2）に書く。
 
-    キーは created_at（ローカル時刻の ISO 形式、秒まで）、ok、status（``status()`` の
-    レコード）、errors（キー -> トレースバック）、warnings、notes（注記のある成功
-    metric のみ）、config（JSON 化した config、なければ null）。JSON にできない値は
-    ``str`` で文字列にする。
+    キーは created_at（ローカル時刻の ISO 形式、秒まで）、state（実行の状態）、pending
+    （まだ結果のない metric のキー）、ok、status（``status()`` のレコード）、errors
+    （キー -> トレースバック）、warnings、notes（注記のある成功 metric のみ）、config
+    （JSON 化した config、なければ null）。JSON にできない値は ``str`` で文字列にする。
+
+    ``state`` は ``finished``（全 metric を実行し、すべて書き終えた）、``running``（実行中、
+    または書き出し中。このまま残っていればプロセスが強制終了されている）、``aborted``
+    （例外や Ctrl-C で中断した）。``ok`` は ``finished`` で全 metric が成功したときだけ true。
+    ``report`` に含まれるのは結果の出た metric だけなので、status・errors・notes に
+    ``pending`` の metric は現れない。
+
+    Args:
+        report: 書き出す評価結果（途中経過なら、その時点までに終わった metric だけを持つ）。
+        directory: 出力先ディレクトリ（作成済みであること）。
+        state: 実行の状態。
+        pending: まだ結果のない metric のキー。
     """
     notes = {
         key: run.result.notes for key, run in report.runs.items() if run.ok and run.result.notes
     }
     info = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "ok": report.ok,
+        "state": state,
+        "pending": list(pending),
+        "ok": report.ok and state == "finished",
         "status": report.status().to_dict("records"),
         "errors": report.errors,
         "warnings": report.warnings,
         "notes": notes,
         "config": report.config.model_dump(mode="json") if report.config else None,
     }
-    with (directory / "run_info.json").open("w", encoding="utf-8") as f:
+    with _atomic(directory / "run_info.json") as tmp, tmp.open("w", encoding="utf-8") as f:
         json.dump(info, f, ensure_ascii=False, indent=2, default=str)
 
 
-def _write_by_date(
-    report: "EvaluationReport", directory: Path, formats: list[OutputFormat], by_date: ByDate
+def write_by_date(
+    report: "EvaluationReport",
+    directory: Path,
+    formats: list[OutputFormat],
+    by_date: ByDate,
+    warn: bool = True,
+    skip: Collection[str] = (),
 ) -> None:
     """日付ごとの断面を ``<directory>/by_date/<date>/`` に書く。
 
@@ -155,14 +205,21 @@ def _write_by_date(
     全テーブルから1回だけ決め、日付によってテーブルの有無が違っても同じテーブルが
     同じシート名になるようにする。ディレクトリ名は日付キーの英数字・``_``・``-`` 以外を
     ``_`` に置き換えたもの（日付キーが規約どおり数字だけならそのまま）。
+
+    ``warn=False`` なら上の警告を出さない（逐次書き出しで metric を1つずつ渡すときは、
+    日付を持つテーブルのない metric があるのが普通なので、最後の全体の書き出しでだけ警告する）。
+    ``skip`` の metric は parquet / csv を書かない（逐次書き出しで既に書いたものを書き直さない
+    ため）。xlsx は1つのブックに全テーブルを入れるので、``skip`` によらずすべて書く。
     """
     if not formats:
         return
     sections = report.by_date(None if by_date == "all" else by_date)
     if not sections:
-        logger.warning("output.by_date is set but no table has rows for it; nothing is written")
+        if warn:
+            logger.warning("output.by_date is set but no table has rows for it; nothing is written")
         return
-    if by_date != "all" and (missing := sorted({str(d) for d in by_date} - set(sections))):
+    missing = [] if by_date == "all" else sorted({str(d) for d in by_date} - set(sections))
+    if warn and missing:
         logger.warning("No table has rows for by_date dates %s", missing)
     used = {"summary", "status"}  # 全体の report.xlsx と同じ名前から始める
     sheets = {(key, name): _sheet_name(key, name, used) for key, name, _ in _tables(report)}
@@ -174,11 +231,27 @@ def _write_by_date(
         target = directory / _BY_DATE_DIR / dirname
         target.mkdir(parents=True, exist_ok=True)
         items = [(key, name, t) for key, tables in metrics.items() for name, t in tables.items()]
+        fresh = [item for item in items if item[0] not in skip]
         for fmt in formats:
             if fmt == "xlsx":
                 _write_xlsx(items, target, sheets=sheets)
             else:
-                _write_files(items, target, fmt)
+                _write_files(fresh, target, fmt)
+
+
+def write_tables(
+    report: "EvaluationReport", directory: Path, fmt: OutputFormat, skip: Collection[str] = ()
+) -> None:
+    """成功した metric の各テーブルを parquet または csv で ``<key>/<table>.<fmt>`` に書く。
+
+    ``skip`` の metric は書かない（逐次書き出しで既に書いたものを書き直さないため）。
+    """
+    _write_files((item for item in _tables(report) if item[0] not in skip), directory, fmt)
+
+
+def write_summary(report: "EvaluationReport", directory: Path, fmt: OutputFormat) -> None:
+    """全 metric の summary（long 形式）を ``summary.<fmt>``（parquet または csv）に書く。"""
+    _write_table(report.summary(), directory / f"summary.{fmt}", fmt, index=False)
 
 
 def write_report(
@@ -186,14 +259,18 @@ def write_report(
     directory: Path,
     formats: list[OutputFormat],
     by_date: ByDate | None = None,
+    state: RunState = "finished",
+    pending: Iterable[str] = (),
+    skip: Collection[str] = (),
 ) -> Path:
     """EvaluationReport を指定の形式で ``directory`` に書き出す。
 
     ディレクトリは親も含めて作成する。``formats`` の重複は1回だけ扱い（順序は保つ）、
     ``xlsx`` は report.xlsx を、それ以外（``parquet`` / ``csv``）はテーブルごとの
     ファイルと summary を書く。``by_date`` を指定すると、日付ごとの断面も同じ形式で
-    ``by_date/<date>/`` に書く。run_info.json は形式によらず書く（断面より先に書くので、
-    断面の書き出しに失敗しても実行の記録は残る）。
+    ``by_date/<date>/`` に書く。run_info.json は形式によらず、すべて書き終えた最後に書く
+    （``state: finished`` が残っていれば、断面まで含めて書けている）。断面を書く場合は、
+    その前にも ``state: running`` で書いておく（断面の書き出しに失敗しても実行の記録は残る）。
     既存のファイルは上書きする（以前の実行で書いたファイルは消さない）。
 
     Args:
@@ -202,6 +279,11 @@ def write_report(
         formats: 出力形式（``parquet`` / ``csv`` / ``xlsx``）のリスト。
         by_date: 日付ごとの断面を出す対象。``"all"`` なら全日付、日付キーのリストなら
             その日付だけ。``None`` か空リストなら出さない。
+        state: run_info.json に記録する実行の状態（``write_run_info`` を参照）。中断した
+            実行の途中までの結果を書くときは ``"aborted"``。
+        pending: run_info.json に記録する、まだ結果のない metric のキー。
+        skip: parquet / csv のテーブルと断面を書かない metric のキー（逐次書き出しで既に
+            書いたもの）。summary・xlsx・run_info.json は ``skip`` によらず書く。
 
     Returns:
         ``directory``（そのまま）。
@@ -213,10 +295,12 @@ def write_report(
             front = {"summary": report.summary(), "status": report.status()}
             _write_xlsx(_tables(report), directory, front)
         else:
-            _write_files(_tables(report), directory, fmt)
-            _write_table(report.summary(), directory / f"summary.{fmt}", fmt, index=False)
-    _write_run_info(report, directory)
+            write_tables(report, directory, fmt, skip)
+            write_summary(report, directory, fmt)
     if by_date:
-        _write_by_date(report, directory, formats, by_date)
+        # 断面を書いている間に落ちても、完了した実行に見えないようにする
+        write_run_info(report, directory, "running" if state == "finished" else state, pending)
+        write_by_date(report, directory, formats, by_date, skip=skip)
+    write_run_info(report, directory, state, pending)
     logger.info("Report written to %s", directory)
     return directory
