@@ -325,7 +325,7 @@ metric のクラスは、基底クラス `Metric`（`metrics/base.py`）を継�
 
 ### `name` と `description`
 
-- `@register_metric` は登録時に、`Metric` のサブクラスであること、`compute` を実装していること、`name` が空でない文字列であること、`Params` が `MetricParams` のサブクラスであることを確認します。満たさない場合は `TypeError` になります。
+- `@register_metric` は登録時に、`Metric` のサブクラスであること、`compute` を実装していること、`name` が英数字で始まる英数字・`_`・`-` だけの文字列（64 文字まで。出力のディレクトリ名になるため）であること、`Params` が `MetricParams` のサブクラスであることを確認します。満たさない場合は `TypeError` になります。
 - `name` は他の metric と重複できません。重複すると登録時に `ValueError` になります。`metrics/` に置いたファイルでこれが起きると、metric の読み込みがそこで止まり、`alpha-eval` のコマンドは `Metric name 'ic' is already registered by ...` というエラーになります。読み込みはファイル名の順なので、まだ読み込まれていなかった metric が `Unknown metric` と報告されることもあります。その場合も原因は `name` の重複です。
 - `name`（config で `id` を付けた場合は `id`）は、出力先のディレクトリ名と xlsx のシート名（`<キー>.<表の名前>`、31 文字で切り詰め）に使われます。組み込みの metric は英小文字とアンダースコアの短い名前にしています。
 - `description` は空にできません（契約テストで検証されます）。組み込みの metric は英語の1行で書いています。

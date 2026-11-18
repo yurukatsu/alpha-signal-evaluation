@@ -24,8 +24,9 @@ parquet / csv と、``state: running`` のままの run_info.json になる。
 ``finish()`` / ``abort()`` で書き直す（run_info.json が、ディスクにない結果を「ある」と
 言わないようにするため）。
 
-出力先に以前の実行のファイルがあっても消さない。今回の実行でどの metric まで書いたかは
-run_info.json の ``status``（結果を書いた metric）と ``pending``（まだの metric）で分かる。
+出力先に以前の実行のファイルがある場合、metric を書くときにその metric の以前の表を消して
+から書く（失敗した metric のディレクトリに以前の結果が残らないようにするため）。まだ
+終わっていない metric（``pending``）と、今回の config にない metric のファイルには触れないので、
 ``pending`` の metric のディレクトリにファイルがあれば、それは以前の実行のものである。
 """
 
@@ -36,7 +37,15 @@ from pathlib import Path
 from ..config import ByDate, EvaluationConfig, OutputFormat
 from ..pipeline.runner import MetricRun
 from .report import EvaluationReport
-from .writers import write_by_date, write_report, write_run_info, write_summary, write_tables
+from .writers import (
+    clear_metric_files,
+    table_suffixes,
+    write_by_date,
+    write_report,
+    write_run_info,
+    write_summary,
+    write_tables,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -112,10 +121,11 @@ class IncrementalWriter:
     def add(self, run: MetricRun) -> None:
         """完了した metric を書き出す（``run_metrics`` の ``on_result`` に渡す）。
 
-        成功した metric は各テーブルと日付ごとの断面を parquet / csv で書く（失敗した metric
-        に書くテーブルはない）。以前の ``add()`` で書けなかった metric があれば、ここで
-        もう一度書く。そのうえで summary と run_info.json を、ファイルに書けた metric の
-        内容に更新する。
+        書く前に、その metric の以前の実行の表を消す（成功した metric は今回書く形式、失敗した
+        metric は csv / parquet のすべて）。成功した metric は各テーブルと日付ごとの断面を
+        parquet / csv で書く（失敗した metric に書くテーブルはない）。以前の ``add()`` で
+        書けなかった metric があれば、ここでもう一度書く。そのうえで summary と run_info.json
+        を、ファイルに書けた metric の内容に更新する。
 
         Args:
             run: 完了した metric の実行結果（成功・失敗とも）。
@@ -132,6 +142,7 @@ class IncrementalWriter:
             if key in self._written:
                 continue
             try:
+                clear_metric_files(self.directory, key, table_suffixes(files, done.ok))
                 if done.ok:
                     single = EvaluationReport(runs={key: done})
                     for fmt in files:

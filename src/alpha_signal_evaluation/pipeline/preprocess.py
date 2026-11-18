@@ -597,6 +597,51 @@ def _load_period_frames(
 
 
 # ---------------------------------------------------------------------------
+# ソースごとに必要な role と列（validation と共有する）
+# ---------------------------------------------------------------------------
+
+
+def source_requirements(component: str, source: object) -> tuple[frozenset[str], list[str]]:
+    """データソースの読み込みに必要な role と、role 以外に必要な列名を返す。
+
+    ``build_bundle`` の読み込み処理と ``validation`` の事前検証が、同じ定義を使うための
+    関数。role は ``columns`` に対応を書く必要がある（実カラム名が role 名と同じでも
+    明示する）。``date`` role は、ソースの形（日付パーティションされたファイル・単一
+    ファイル・DB）によって要否が変わるため、ここでは含めない（DB のリターンを除く）。
+
+    Args:
+        component: ソースの種類。``signals`` / ``classification`` / ``universe`` /
+            ``benchmark`` / ``returns`` / ``exposures`` / ``factor_covariance`` /
+            ``specific_risk`` / ``factor_returns``。
+        source: その種類のソースの config。
+
+    Returns:
+        ``(必須の role 名, role にリネームした後に必要な列名)``。列名はシグナルの
+        ``values`` とリターンの ``series`` の ``column``（ほかは空）。
+
+    Raises:
+        ValueError: 未知の ``component`` の場合。
+    """
+    if component == "signals":
+        return frozenset({ASSET_ID}), list(source.value_map.values())
+    if component == "classification":
+        roles = {ASSET_ID} if source.one_hot else {ASSET_ID, CATEGORY}
+        return frozenset(roles), []
+    if component in ("universe", "exposures", "specific_risk"):
+        return frozenset({ASSET_ID}), []
+    if component == "benchmark":
+        return frozenset({ASSET_ID, WEIGHT}), []
+    if component == "returns":
+        roles = {ASSET_ID} | ({DATE} if isinstance(source, ReturnsDBSource) else set())
+        return frozenset(roles), list(dict.fromkeys(s.column for s in source.series.values()))
+    if component == "factor_covariance":
+        return frozenset({FACTOR}), []
+    if component == "factor_returns":
+        return frozenset({FACTOR, VALUE}), []
+    raise ValueError(f"Unknown source component: {component!r}")
+
+
+# ---------------------------------------------------------------------------
 # DataBundle の組み立て
 # ---------------------------------------------------------------------------
 
@@ -635,7 +680,8 @@ def _load_signals(cfg: EvaluationConfig, plan: EvaluationPlan, ctx: LoadContext)
     """
     frames = []
     for source in cfg.data.signals:
-        df = load_snapshot(source, plan.eval_rows, ctx, {ASSET_ID})
+        roles, _ = source_requirements("signals", source)
+        df = load_snapshot(source, plan.eval_rows, ctx, roles)
         value_map = source.value_map
         missing = set(value_map.values()) - set(df.columns)
         if missing:
@@ -677,10 +723,11 @@ def _load_classification(
         ValueError: one_hot で1銘柄に複数のカテゴリが立っている場合、またはダミー列に
             数値に変換できない値がある場合。
     """
+    roles, _ = source_requirements("classification", source)
     if not source.one_hot:
-        df = load_snapshot(source, plan.eval_rows, ctx, {ASSET_ID, CATEGORY})
+        df = load_snapshot(source, plan.eval_rows, ctx, roles)
         return df.set_index([DATE, ASSET_ID]).sort_index()
-    df = load_snapshot(source, plan.eval_rows, ctx, {ASSET_ID}).set_index([DATE, ASSET_ID])
+    df = load_snapshot(source, plan.eval_rows, ctx, roles).set_index([DATE, ASSET_ID])
     dummies = df.apply(pd.to_numeric, errors="raise")
     flags = dummies.fillna(0) != 0
     n_flags = flags.sum(axis=1)
@@ -829,13 +876,16 @@ def _load_custom_risk_model(
     exposures = factor_covariance = specific_risk = None
     forward_factor = {}
     if model.exposures is not None:
-        df = load_snapshot(model.exposures, plan.eval_rows, ctx, {ASSET_ID})
+        roles, _ = source_requirements("exposures", model.exposures)
+        df = load_snapshot(model.exposures, plan.eval_rows, ctx, roles)
         exposures = df.set_index([DATE, ASSET_ID]).select_dtypes("number").sort_index()
     if model.factor_covariance is not None:
-        df = load_snapshot(model.factor_covariance, plan.eval_rows, ctx, {FACTOR})
+        roles, _ = source_requirements("factor_covariance", model.factor_covariance)
+        df = load_snapshot(model.factor_covariance, plan.eval_rows, ctx, roles)
         factor_covariance = _covariance_matrix(df, model.factor_covariance)
     if model.specific_risk is not None:
-        df = load_snapshot(model.specific_risk, plan.eval_rows, ctx, {ASSET_ID})
+        roles, _ = source_requirements("specific_risk", model.specific_risk)
+        df = load_snapshot(model.specific_risk, plan.eval_rows, ctx, roles)
         specific_risk = df.set_index([DATE, ASSET_ID]).sort_index()
     if model.factor_returns is not None:
         source = model.factor_returns
@@ -846,7 +896,7 @@ def _load_custom_risk_model(
             ctx,
             columns=FACTOR,
             values={FACTOR: (VALUE, "sum")},
-            required_roles={FACTOR, VALUE},
+            required_roles=set(source_requirements("factor_returns", source)[0]),
             convention=source.convention,
         )[FACTOR]
         forward_factor = _forward_on_eval_rows(period, plan, source.convention, "sum")
@@ -974,14 +1024,16 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
         signals = _load_signals(cfg, plan, ctx)
 
         if cfg.universe is not None:
-            members = load_snapshot(cfg.universe, plan.eval_rows, ctx, {ASSET_ID})
+            roles, _ = source_requirements("universe", cfg.universe)
+            members = load_snapshot(cfg.universe, plan.eval_rows, ctx, roles)
             members = members.set_index([DATE, ASSET_ID]).sort_index()
             signals = signals[signals.index.isin(members.index)]
             if WEIGHT in members.columns:
                 benchmark_weights = members[[WEIGHT]].astype(float)
 
         if cfg.benchmark is not None:
-            bm = load_snapshot(cfg.benchmark, plan.eval_rows, ctx, {ASSET_ID, WEIGHT})
+            roles, _ = source_requirements("benchmark", cfg.benchmark)
+            bm = load_snapshot(cfg.benchmark, plan.eval_rows, ctx, roles)
             benchmark_weights = bm.set_index([DATE, ASSET_ID])[[WEIGHT]].astype(float).sort_index()
 
         # Barra で BID のまま使う銘柄は、シグナルのある銘柄（ユニバース適用後）に限る
@@ -993,7 +1045,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
 
         fwd: dict[str, dict[int, pd.DataFrame]] = {}
         for source in cfg.returns:
-            required = {ASSET_ID} | ({DATE} if isinstance(source, ReturnsDBSource) else set())
+            required, _ = source_requirements("returns", source)
             periods = _load_period_frames(
                 source,
                 plan,
@@ -1003,7 +1055,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                     name: (s.column, AGGREGATION_BY_KIND[s.kind])
                     for name, s in source.series.items()
                 },
-                required_roles=required,
+                required_roles=set(required),
                 convention=source.convention,
                 warnings=warnings,
                 assets=assets,

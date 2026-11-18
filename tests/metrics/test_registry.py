@@ -81,3 +81,18 @@ def test_params_from_kwargs_dict_or_instance():
     assert ic(ic.Params(method="pearson")).params.method == "pearson"
     with pytest.raises(ValueError):
         ic(method="kendall")
+
+
+@pytest.mark.parametrize("name", ["ic/v2", "..", "ic v2", "x" * 65])
+def test_metric_name_must_be_a_safe_directory_name(name):
+    """id を省くと name が出力のディレクトリ名になるので、id と同じ規則で検証する。"""
+
+    class Unsafe(Metric):
+        description = "unsafe"
+
+        def compute(self, data):
+            return MetricResult(summary={"x": 1.0})
+
+    Unsafe.name = name
+    with pytest.raises(TypeError, match="letters, digits"):
+        register_metric(Unsafe)

@@ -113,8 +113,9 @@ def evaluate(
 
     出力先に以前の実行の結果がある場合、run_info.json は開始時に、summary は metric が
     終わるたびに今回の内容で置き換わる（中断した場合は report.xlsx も途中までの内容になる）。
-    まだ終わっていない metric のディレクトリには以前の実行のファイルが残るので、以前の
-    結果を残したい場合は出力先を分ける。
+    metric の表は、書く前にその metric の以前の表を消すので、今回失敗した metric の前回の
+    結果は残らない。まだ終わっていない metric のディレクトリには以前の実行のファイルが
+    残るので、以前の結果を残したい場合は出力先を分ける。
 
     Args:
         config: config.yaml のパス、dict、または EvaluationConfig。dict の場合、

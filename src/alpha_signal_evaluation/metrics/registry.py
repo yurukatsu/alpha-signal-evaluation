@@ -18,8 +18,10 @@ import importlib
 import inspect
 import logging
 import pkgutil
+import re
 from importlib.metadata import entry_points
 
+from ..config import METRIC_KEY_MAX_LENGTH, METRIC_KEY_PATTERN
 from .base import Metric, MetricParams
 
 logger = logging.getLogger(__name__)
@@ -35,7 +37,8 @@ def register_metric[M: type[Metric]](cls: M) -> M:
     """``Metric`` のサブクラスをレジストリに登録するクラスデコレータ。
 
     登録時に次を検証する: ``Metric`` のサブクラスであること、``compute`` が実装済み
-    （抽象クラスでない）こと、``name`` が空でない文字列であること、``Params`` が
+    （抽象クラスでない）こと、``name`` が英数字で始まる英数字・``_``・``-`` だけの文字列
+    （64文字まで。出力のディレクトリ名になるため）であること、``Params`` が
     :class:`~alpha_signal_evaluation.metrics.base.MetricParams` のサブクラスであること。
 
     同じ ``name`` が別のクラス（モジュール名 + 修飾名で比較）で登録済みならエラー。
@@ -58,6 +61,12 @@ def register_metric[M: type[Metric]](cls: M) -> M:
     name = getattr(cls, "name", None)
     if not isinstance(name, str) or not name:
         raise TypeError(f"{cls.__name__} must define a non-empty class attribute `name`")
+    # name は id を省いたときの結果のキー（出力のディレクトリ名）になるので、id と同じ規則にする
+    if not re.fullmatch(METRIC_KEY_PATTERN, name) or len(name) > METRIC_KEY_MAX_LENGTH:
+        raise TypeError(
+            f"{cls.__name__}.name {name!r} must start with a letter or digit and contain only "
+            f"letters, digits, '_' and '-' (at most {METRIC_KEY_MAX_LENGTH} characters)"
+        )
     if not (inspect.isclass(cls.Params) and issubclass(cls.Params, MetricParams)):
         raise TypeError(f"{cls.__name__}.Params must be a subclass of MetricParams")
 

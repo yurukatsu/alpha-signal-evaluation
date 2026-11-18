@@ -10,11 +10,14 @@ metric の追加方法、AI チャットに metric を書かせるためのプ�
 ## セットアップ
 
 ```sh
-uv sync                       # 本体（ファイル入力のみ）
-uv sync --extra mssql         # SQL Server を使う場合（ODBC Driver 17 for SQL Server が必要）
-uv sync --extra postgres      # PostgreSQL
-uv sync --extra mysql         # MySQL
+uv sync                                  # 本体（ファイル入力のみ）
+uv sync --extra mssql                    # SQL Server を使う場合（ODBC Driver 17 for SQL Server が必要）
+uv sync --extra mssql --extra postgres   # 複数の DB を使う場合は1回の uv sync に並べる
+uv sync --all-extras                     # SQL Server・PostgreSQL・MySQL のすべて
 ```
+
+`uv sync` は指定しなかった extra のドライバーを取り除くので、`--extra` ごとに別々に実行すると
+最後の1つしか残らない。extra は `mssql` / `postgres` / `mysql`。
 
 DB 接続（`io/db`）は社内の namdb v0.1.2 を取り込んだもの。接続先のホスト名・認証情報は環境変数から読む
 （`.env.example` を `.env` にコピーして記入。CLI は実行ディレクトリの `.env` を読み込む）。
@@ -42,6 +45,8 @@ uv run alpha-eval metrics list -v        # 登録済み metric とパラメー�
 並列実行（`n_jobs` > 1）中に Ctrl-C で中断した場合、実行中だった metric の結果は残らない。
 
 同じ出力先に再実行すると、`run_info.json` は開始時に、`summary` は metric が終わるたびに今回の内容で置き換わる。
+metric の表（csv / parquet）は、書く前にその metric の以前の表を消してから書くので、今回失敗した metric の前回の
+csv / parquet は残らない（`report.xlsx` は今回 xlsx を書いたときだけ置き換わる）。
 再実行が途中で止まると、まだ終わっていない metric のディレクトリには以前の実行のファイルが残る（`pending` に
 載っている metric のファイルは以前の実行のもの）。以前の結果を残したい場合は `--output-dir` で出力先を分ける。
 
