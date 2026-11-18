@@ -6,13 +6,19 @@ MetricRun）と警告から作る。失敗した metric があってもレポー
 ``writers.py`` にあり、ここでは出力先と形式の決定だけを行う。
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TypeAlias
 
 import pandas as pd
 
-from ..config import EvaluationConfig, OutputFormat
+from ..config import ByDate, EvaluationConfig, OutputFormat
+from ..data.columns import DATE
 from ..pipeline.runner import MetricRun
+
+# 日付 -> metric のキー -> テーブル名 -> その日付の行
+DateTables: TypeAlias = dict[str, dict[str, dict[str, pd.DataFrame]]]
 
 
 @dataclass
@@ -100,25 +106,99 @@ class EvaluationReport:
             ]
         )
 
+    def by_date(self, dates: Iterable[str] | None = None) -> DateTables:
+        """日付を持つテーブルを日付ごとに切り出す（ある時点の断面）。
+
+        成功した metric のテーブルのうち ``date`` 列（または index の ``date`` レベル）を
+        持つものが対象で、metric 側の対応は要らない。各テーブルはその日付の行だけを残し、
+        ``date`` 列を除く（他の列・行の順序は元のまま）。日付を持たないテーブル（期間全体の
+        summary 等）と、その日付に行がないテーブルは含まれない。値は加工しないので、
+        欠損の行は欠損のまま残る（日付が欠損の行はどの断面にも入らない）。
+
+        日付は文字列に直して照合する（日付キーは文字列が規約だが、int 等の日付を持つ
+        DataBundle を直接渡した場合でも ``dates()`` の値でそのまま引けるようにするため）。
+        ``date`` が列と index の両方にあるテーブルは列を使う。
+
+        Args:
+            dates: 取り出す日付キー。省略時はテーブルに現れる全日付。どのテーブルにも
+                ない日付は結果に含まれない。
+
+        Returns:
+            日付（文字列、昇順） -> metric のキー -> テーブル名 -> DataFrame。
+        """
+        wanted = None if dates is None else {str(d) for d in dates}
+        out: DateTables = {}
+        for key, run in self.runs.items():
+            if not run.ok:
+                continue
+            for name, table in run.result.tables.items():
+                if DATE not in table.columns:
+                    if DATE not in table.index.names:
+                        continue
+                    table = table.reset_index(DATE)
+                ranged = isinstance(table.index, pd.RangeIndex)
+                # 欠損の日付は "nan" という断面にせず、groupby で落とす
+                keys = table[DATE].astype(str).where(table[DATE].notna())
+                for date, rows in table.groupby(keys, sort=False):
+                    if wanted is not None and date not in wanted:
+                        continue
+                    rows = rows.drop(columns=DATE)
+                    if ranged:
+                        rows = rows.reset_index(drop=True)
+                    out.setdefault(date, {}).setdefault(key, {})[name] = rows
+        return dict(sorted(out.items()))
+
+    def dates(self) -> list[str]:
+        """``by_date()`` / ``at()`` で取り出せる日付キー（昇順）。"""
+        return list(self.by_date())
+
+    def at(self, date: str) -> dict[str, dict[str, pd.DataFrame]]:
+        """1つの日付の断面を返す（リバランス時点ごとに全シグナルを見比べる用途）。
+
+        Args:
+            date: 日付キー（``yyyymmdd`` / ``yyyymm``）。
+
+        Returns:
+            metric のキー -> テーブル名 -> その日付の行（``date`` 列なし）。
+
+        Raises:
+            KeyError: その日付の行を持つテーブルがない場合。
+
+        Examples:
+            >>> report.at("20240531")["ic"]["timeseries"]  # doctest: +SKIP
+        """
+        date = str(date)
+        tables = self.by_date([date])
+        if date not in tables:
+            raise KeyError(f"No table has rows for date {date!r}")
+        return tables[date]
+
     def save(
         self,
         directory: str | Path | None = None,
         formats: list[OutputFormat] | None = None,
+        by_date: ByDate | None = None,
     ) -> Path:
         """結果を書き出す。省略時は config の output 設定を使う。
 
         ``directory`` と ``formats`` のうち省略した方だけを config の ``output.dir`` /
-        ``output.formats`` で補う。書き出す内容（形式の重複は1回だけ扱う）:
+        ``output.formats`` で補う。``by_date`` も省略時は config の ``output.by_date``
+        （config がなければ出さない）。書き出す内容（形式の重複は1回だけ扱う）:
 
         - parquet / csv: 成功した metric の各テーブルを ``<directory>/<key>/<table>.<ext>``、
           全 metric の summary を ``<directory>/summary.<ext>`` に書く。
           csv は UTF-8（BOM 付き）。
         - xlsx: ``<directory>/report.xlsx``（summary・status シートと各テーブルのシート）。
         - 形式によらず ``<directory>/run_info.json``（状態・エラー・警告・注記・config）。
+        - ``by_date`` を指定した場合: 日付ごとの断面（``by_date()``）を同じ形式で
+          ``<directory>/by_date/<date>/<key>/<table>.<ext>`` と
+          ``<directory>/by_date/<date>/report.xlsx`` に書く。
 
         Args:
             directory: 出力先ディレクトリ（なければ親も含めて作成する）。
             formats: 出力形式（``parquet`` / ``csv`` / ``xlsx``）のリスト。
+            by_date: 日付ごとの断面を出す対象。``"all"`` なら全日付、日付キーのリストなら
+                その日付だけ（空リストなら出さない）。
 
         Returns:
             出力先ディレクトリの Path。
@@ -133,7 +213,9 @@ class EvaluationReport:
                 raise ValueError("directory and formats are required when config is not set")
             directory = directory or self.config.output.dir
             formats = formats or self.config.output.formats
-        return write_report(self, Path(directory), formats)
+        if by_date is None and self.config is not None:
+            by_date = self.config.output.by_date
+        return write_report(self, Path(directory), formats, by_date)
 
 
 def _last_line(text: str | None) -> str:

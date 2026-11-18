@@ -306,6 +306,9 @@ output:
   dir: ./output                 # 省略時: ./out
   formats: [csv]                # csv / parquet / xlsx（複数可）。省略時: [csv]
                                 # csv は Excel で文字化けしないよう BOM 付き UTF-8
+  by_date: all                  # 日付ごとの断面（リバランス時点ごとに全シグナルを見比べる）も出す。省略時: 出さない
+                                # all = 全日付 / ["20240531", "20240628"] = 指定した日付（calendar.index の値）だけ
+                                # date 列を持つ全テーブルを by_date/<日付>/<metric>/<table>.csv に切り出す
 
 # DB 取得結果のローカルキャッシュ（クエリと期間のハッシュがキー）
 cache:

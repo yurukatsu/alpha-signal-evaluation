@@ -8,6 +8,7 @@
 - ファイルの拡張子が対応しているか、DB の接続先・SQL ファイル・環境変数が揃っているか
 - metric 名がレジストリにあるか、``params`` が metric の ``Params`` に合うか、
   metric が要求するデータ（``requires``）やシグナル名・系列名・ホライズンが config にあるか
+- ``output.by_date`` に列挙した日付が評価期間にあるか
 - 必要なファイルがすべて存在するか（任意）
 
 計算を始める前に設定ミスをすべて集めて一覧で報告する（最初のエラーで止めない）。
@@ -16,7 +17,7 @@ data / io / metrics / pipeline の関数を参照するが、DataBundle は組�
 """
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -412,6 +413,30 @@ def _check_connections(cfg: EvaluationConfig) -> list[str]:
     return errors
 
 
+def validate_by_date(cfg: EvaluationConfig, dates: Iterable[str]) -> list[str]:
+    """``output.by_date`` に列挙した日付が評価対象の日付にあるかを検証する。
+
+    ``output.by_date`` が未指定または ``"all"`` なら検証しない。
+
+    Args:
+        cfg: 構造の検証済みの config。
+        dates: 評価対象の日付キー（config から読む場合は評価期間のカレンダー行、
+            DataBundle を直接渡す場合は ``bundle.dates``）。
+
+    Returns:
+        エラーメッセージのリスト。問題がなければ空リスト。
+    """
+    by_date = cfg.output.by_date
+    if not isinstance(by_date, list):
+        return []
+    dates = [str(d) for d in dates]  # bundle を直接渡した場合、日付が文字列とは限らない
+    unknown = sorted(set(by_date) - set(dates))
+    if not unknown:
+        return []
+    span = f"{dates[0]}..{dates[-1]}, {len(dates)} dates" if dates else "no dates"
+    return [f"output.by_date: dates {unknown} are not in the evaluation period ({span})"]
+
+
 def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> ValidationReport:
     """config をデータソースまで含めて検証する（計算はしない）。
 
@@ -425,9 +450,11 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
        Barra の ``match_on``）
     4. DB の接続先ごとのホスト名・認証情報の環境変数
     5. 有効な metric の名前・params・要求データ（``spec_from_config()`` と照合）
+       と、``output.by_date`` に列挙した日付が評価期間にあるか
     6. ``check_files=True`` で、ここまでエラーがなければ、必要なファイルがすべて存在するか
 
-    カレンダーを読めなかった場合は 2・3 を、期間の解決に失敗した場合は 6 を行わない。
+    カレンダーを読めなかった場合は 2・3 を、カレンダーを読めなかったか期間の解決に
+    失敗した場合は 5 の ``output.by_date`` の検証と 6 を行わない。
 
     Args:
         cfg: 構造の検証済みの config。
@@ -464,6 +491,8 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
 
     report.errors += _check_connections(cfg)
     report.errors += validate_metrics(cfg.enabled_metrics, spec_from_config(cfg))
+    if plan is not None:
+        report.errors += validate_by_date(cfg, plan.eval_keys)
 
     # パスの解決に問題がなければ、全ファイルの存在を一括でチェックする
     if check_files and plan is not None and not report.errors:

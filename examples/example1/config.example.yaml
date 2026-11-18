@@ -87,6 +87,7 @@ execution:
 output:
   dir: ./output
   formats: [csv]               # csv / parquet / xlsx（複数指定可）
+  by_date: all                 # 日付ごとの断面も by_date/<日付>/ に出す（["20240531"] のように Base_day の値で指定も可）
 
 cache:
   dir: ./.cache
