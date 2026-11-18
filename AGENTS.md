@@ -37,9 +37,12 @@ cli → api → validation / pipeline → data → io
   `barra.py` は `source: barra` の読み込み（SQL・単位の換算・BID → nri_code・USD 換算）。期間集約は preprocess が行う。
 - `pipeline/preprocess.py`: 期間集約・フォワードリターン・ユニバース適用・`DataBundle` の組み立て。
 - `pipeline/runner.py`: metrics の実行（並列時は `DataBundle` を initializer で1回だけ渡す）。失敗は metric 単位で隔離。
+  metric が終わるたびに `on_result` で呼び出し側に知らせる（書き出しは扱わない）。
 - `metrics/`: `DataBundle` → `MetricResult` のみ。データ取得・出力をしない。`_` 始まりのモジュールは自動探索の対象外。
 - `report/`: 出力形式の処理（parquet / csv / xlsx / run_info.json）。日付ごとの断面（`output.by_date`）は
   `date` 列を持つテーブルを report 側で切り出すだけで、metric 側の対応は不要（時系列のテーブルには `date` 列を持たせる）。
+  `incremental.py` は逐次書き出し（`evaluate(save=...)`、CLI の既定）。途中で落ちてもそれまでの結果を残すため、
+  出力に手を入れるときは「metric 1つ分だけ書く」「最後に全体を書く」の両方で同じ結果になるようにする。
 
 ## 規約
 
@@ -51,6 +54,12 @@ cli → api → validation / pipeline → data → io
   kind ごとの束ね方（total は複利、specific は加算）は `config.AGGREGATION_BY_KIND` の1か所で定義する。
 - リスクモデルの `factor_covariance` はソースによらず index=(date, factor)、columns=ファクターの正方行列（年率の小数²）。
 - 型エイリアスは `TypeAlias` で書く。コメント・docstring は日本語。
+
+## ドキュメント
+
+利用者向けのマニュアルは `docs/`（目次は `docs/README.md`）。コードを変更したら対応する文書も更新する
+（どの変更でどの文書を直すかは `docs/README.md` の「マニュアルの保守」）。metric の契約
+（`metrics/base.py`・`data/bundle.py`・`metrics/_common.py`）を変えたら、`docs/06_ai_prompt.md` のプロンプトも直す。
 
 ## 未実装・未決事項
 
