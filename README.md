@@ -27,6 +27,10 @@ uv run alpha-eval run config.yaml        # 評価して output.dir に書き出�
 uv run alpha-eval metrics list -v        # 登録済み metric とパラメータ
 ```
 
+出力は metric のテーブルごとの時系列（`<output.dir>/<metric>/<table>.csv`）。`output.by_date: all`
+（または日付のリスト）を指定すると、日付ごとの断面も `<output.dir>/by_date/<日付>/<metric>/<table>.csv` に書き出す
+（`date` 列を持つ全テーブルをその日付の行だけに切り出したもの。リバランス時点ごとに全シグナルを見比べる用途）。
+
 サンプル（いずれも合成データを生成して評価する）:
 
 - [examples/example1](examples/example1): 日次の日付キー（`{Label2}` 等）・one-hot の業種分類
@@ -49,6 +53,7 @@ report["ic"].tables["summary"]        # metric ごとの表
 report.summary()                      # 全 metric の要約（long 形式）
 report.errors                         # 失敗した metric（他の結果は返る）
 report.save()                         # config の output 設定で書き出し
+report.at("20240531")["ic"]["timeseries"]  # ある日付の断面（その日付の全シグナルの行）
 
 # 手元の DataFrame で評価する（io 層をバイパス）
 bundle = make_bundle(

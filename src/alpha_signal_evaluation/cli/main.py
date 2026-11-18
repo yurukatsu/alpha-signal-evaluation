@@ -88,7 +88,8 @@ def run(
     \f
     config を読み込んで ``api.evaluate()`` で評価し、``EvaluationReport.save()`` で
     結果を書き出す。書き出し先は ``--output-dir``（省略時は config の ``output.dir``）、
-    形式は config の ``output.formats``。``--output-dir`` の相対パスは実行ディレクトリ基準。
+    形式は config の ``output.formats``、日付ごとの断面を出すかは config の
+    ``output.by_date``。``--output-dir`` の相対パスは実行ディレクトリ基準。
     その後、警告を黄色で、metric ごとの実行状況（metric / name / status / elapsed_sec）の
     表と出力先を表示する。
 

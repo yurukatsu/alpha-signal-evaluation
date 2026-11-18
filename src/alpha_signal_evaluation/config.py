@@ -89,6 +89,8 @@ def _to_list(value: Any) -> Any:
 
 PathLike = Annotated[str, AfterValidator(_resolve_path)]
 DateKey = Annotated[str, BeforeValidator(_to_str), Field(pattern=r"^\d{6}(\d{2})?$")]
+# 日付ごとの断面を出す対象。"all"（結果に現れる全日付）または日付キーのリスト
+ByDate: TypeAlias = Literal["all"] | list[DateKey]
 
 
 def template_fields(template: str) -> set[str]:
@@ -760,10 +762,19 @@ class OutputConfig(_Base):
             相対パスは config ファイルの場所を基準に解決する。
         formats: 出力形式のリスト（YAML ``output.formats``、既定 ``["csv"]``）。
             ``parquet`` / ``xlsx`` / ``csv`` から選ぶ。
+        by_date: 日付ごとの断面の出力（YAML ``output.by_date``、既定 ``None`` = 出さない）。
+            ``"all"`` なら結果に現れる全日付、日付キーのリストならその日付だけを
+            ``<dir>/by_date/<date>/`` に書き出す（リバランス時点ごとに全シグナルを見比べる用途）。
+            リストの日付が評価期間にあるかは ``validation.py`` で確認する。
+
+    Examples:
+        >>> OutputConfig(by_date=[20240531]).by_date
+        ['20240531']
     """
 
     dir: PathLike = Field(default="out", validate_default=True)
     formats: list[OutputFormat] = Field(default_factory=lambda: ["csv"])
+    by_date: ByDate | None = None
 
 
 class CacheConfig(_Base):
@@ -812,7 +823,8 @@ class EvaluationConfig(_Base):
             （YAML ``portfolios``、既定 ``[]``）。現状は空でないとエラーになる。
         metrics: 実行する metric のリスト（YAML ``metrics``、既定 ``[]``）。
         execution: 実行設定（YAML ``execution``、既定 ``n_jobs=1``）。
-        output: 出力設定（YAML ``output``、既定 ``dir="out"``、``formats=["csv"]``）。
+        output: 出力設定（YAML ``output``、既定 ``dir="out"``、``formats=["csv"]``、
+            ``by_date`` なし = 日付ごとの断面は出さない）。
         cache: DB キャッシュの設定（YAML ``cache``、既定 ``enabled=True``、
             ``dir=".cache"``）。
 

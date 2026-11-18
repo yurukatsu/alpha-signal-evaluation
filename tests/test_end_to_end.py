@@ -476,3 +476,97 @@ def test_db_snapshot_source(dataset, monkeypatch, db_env):
     cls = bundle.classification
     assert sorted(cls.index.get_level_values("date").unique()) == dataset.base[1:11]
     assert cls.loc[(dataset.base[1], "0002"), "category"] == "S1"
+
+
+def test_report_is_saved_by_date(dataset, tmp_path):
+    """日付ごとの断面は、時系列のテーブルをその日付で絞ったものと一致する。"""
+    report = evaluate(dataset.write_config())
+    dates = sorted(report["ic"].tables["timeseries"]["date"].unique())
+    date = dates[2]
+    ts = report["ic"].tables["timeseries"]
+    expected = ts[ts["date"] == date].drop(columns="date").reset_index(drop=True)
+    assert set(expected["signal"]) == {"perfect", "noise"}  # 1つの表に全シグナルが並ぶ
+
+    assert report.dates() == dates
+    section = report.at(date)
+    pd.testing.assert_frame_equal(section["ic"]["timeseries"], expected)
+    assert "summary" not in section["ic"]  # 日付を持たないテーブルは対象外
+    with pytest.raises(KeyError):
+        report.at("19000131")
+
+    out = report.save(tmp_path / "all", ["csv", "xlsx"], by_date="all")
+    assert sorted(p.name for p in (out / "by_date").iterdir()) == dates
+    saved = pd.read_csv(out / "by_date" / date / "ic" / "timeseries.csv", encoding="utf-8-sig")
+    pd.testing.assert_frame_equal(saved, expected, check_dtype=False)
+    sheets = pd.ExcelFile(out / "by_date" / date / "report.xlsx").sheet_names
+    assert "ic.timeseries" in sheets and "summary" not in sheets
+    last = dates[-1]  # もう1つ別の表・別の日付でも確認する
+    returns = report["quantile"].tables["returns"]
+    expected = returns[returns["date"] == last].drop(columns="date").reset_index(drop=True)
+    saved = pd.read_csv(out / "by_date" / last / "quantile" / "returns.csv", encoding="utf-8-sig")
+    pd.testing.assert_frame_equal(saved, expected, check_dtype=False)
+
+    one = report.save(tmp_path / "one", ["csv"], by_date=[date])
+    assert [p.name for p in (one / "by_date").iterdir()] == [date]
+
+    # 従来の出力（by_date/ の外）は by_date の指定によらず同じ
+    plain = report.save(tmp_path / "plain", ["csv", "xlsx"])
+    assert not (plain / "by_date").exists()
+    files = sorted(p.relative_to(plain) for p in plain.rglob("*.csv"))
+    assert files and files == sorted(
+        p.relative_to(out) for p in out.rglob("*.csv") if "by_date" not in p.parts
+    )
+    for path in files:
+        assert (plain / path).read_bytes() == (out / path).read_bytes(), path
+    book = pd.read_excel(out / "report.xlsx", sheet_name=None)
+    plain_book = pd.read_excel(plain / "report.xlsx", sheet_name=None)
+    assert list(book)[:3] == ["summary", "status", "ic.timeseries"]
+    assert list(book) == list(plain_book)
+    pd.testing.assert_frame_equal(book["summary"], report.summary(), check_dtype=False)
+    assert list(book["status"]["metric"]) == list(report.status()["metric"])
+    for sheet, frame in book.items():
+        if sheet != "status":  # status は実行時間を含まないが、空文字の error が NaN で戻る
+            pd.testing.assert_frame_equal(frame, plain_book[sheet])
+
+
+def test_by_date_keeps_missing_rows(dataset, tmp_path):
+    """末尾の日付の欠損した IC も、断面と書き出しにそのまま残る（行を落とさない）。"""
+    cfg = dataset.config(period={"start": dataset.base[1], "end": dataset.base[12]})
+    report = evaluate(
+        cfg | {"calendar": {"path": str(dataset.root / "calendar.tsv")}} | _abs(dataset, cfg)
+    )
+    last = dataset.base[12]
+    ts = report["ic"].tables["timeseries"]
+    expected = ts[ts["date"] == last].drop(columns="date").reset_index(drop=True)
+    assert expected["ic"].isna().any() and expected["ic"].notna().any()  # h=3 だけ欠損
+    pd.testing.assert_frame_equal(report.at(last)["ic"]["timeseries"], expected)
+
+    out = report.save(tmp_path / "o", ["csv"], by_date=[last])
+    saved = pd.read_csv(out / "by_date" / last / "ic" / "timeseries.csv", encoding="utf-8-sig")
+    pd.testing.assert_frame_equal(saved, expected, check_dtype=False)
+
+
+def test_by_date_in_config_is_validated(dataset):
+    output = {"dir": "out", "formats": ["csv"], "by_date": [int(dataset.base[3]), "19000131"]}
+    result = validate(dataset.write_config(output=output))
+    assert any("output.by_date" in e and "19000131" in e for e in result.errors)
+    assert not any(dataset.base[3] in e for e in result.errors)
+
+    # カレンダーにはあるが評価期間（base[1]..base[10]）の外の日付もエラー
+    output["by_date"] = [dataset.base[12]]
+    result = validate(dataset.write_config(output=output))
+    assert any("output.by_date" in e and dataset.base[12] in e for e in result.errors)
+
+    output["by_date"] = [dataset.base[3]]
+    out = evaluate(dataset.write_config(output=output)).save()
+    assert [p.name for p in (out / "by_date").iterdir()] == [dataset.base[3]]
+
+
+def test_by_date_is_validated_against_the_bundle_dates(bundle):
+    """DataBundle を直接渡す場合も、by_date の日付は計算前に検証される。"""
+    cfg = {"version": 1, "metrics": [{"name": "ic"}], "output": {"by_date": ["19000131"]}}
+    with pytest.raises(ConfigValidationError, match="output.by_date"):
+        evaluate(cfg, data=bundle)
+
+    cfg["output"]["by_date"] = [bundle.dates[3]]
+    assert evaluate(cfg, data=bundle).ok
