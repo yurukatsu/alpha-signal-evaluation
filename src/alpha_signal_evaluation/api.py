@@ -21,6 +21,7 @@ from .validation import (
     ConfigValidationError,
     ValidationReport,
     instantiate_metrics,
+    validate_by_date,
     validate_config,
     validate_metrics,
 )
@@ -93,9 +94,9 @@ def evaluate(
     時点合わせ済みの DataBundle を組み立ててから、有効な metric を実行する。
     検証とデータ準備の警告は重複を除いて ``report.warnings`` に入る。
 
-    ``data`` を渡した場合は io / loaders をバイパスし、metric の設定だけを
-    ``data.spec()`` と照らして検証する（config の ``calendar`` / ``data`` / ``returns`` /
-    ``period`` 等は使わない）。この場合 ``report.warnings`` は空。
+    ``data`` を渡した場合は io / loaders をバイパスし、metric の設定（と ``output.by_date``
+    の日付）だけを ``data`` と照らして検証する（config の ``calendar`` / ``data`` /
+    ``returns`` / ``period`` 等は使わない）。この場合 ``report.warnings`` は空。
 
     metric の計算中の例外は送出せず、その metric を失敗として記録して他の metric の
     結果を返す。
@@ -113,8 +114,8 @@ def evaluate(
         ファイルへの書き出しは ``report.save()``。
 
     Raises:
-        ConfigValidationError: config の意味の検証（``data`` を渡した場合は metric の
-            検証のみ）でエラーがあった場合。
+        ConfigValidationError: config の意味の検証（``data`` を渡した場合は metric と
+            ``output.by_date`` の検証のみ）でエラーがあった場合。
         pydantic.ValidationError: config の構造の検証に失敗した場合。
         FileNotFoundError: config ファイルや、評価期間内のデータファイルが見つからない場合
             （データ読み込み中のその他の例外もそのまま送出される）。
@@ -134,6 +135,7 @@ def evaluate(
         warnings = list(dict.fromkeys(validation.warnings + prepared.warnings))
     else:
         errors = validate_metrics(cfg.enabled_metrics, data.spec())
+        errors += validate_by_date(cfg, data.dates)
         if errors:
             raise ConfigValidationError(errors)
 

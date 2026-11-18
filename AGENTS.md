@@ -38,7 +38,8 @@ cli → api → validation / pipeline → data → io
 - `pipeline/preprocess.py`: 期間集約・フォワードリターン・ユニバース適用・`DataBundle` の組み立て。
 - `pipeline/runner.py`: metrics の実行（並列時は `DataBundle` を initializer で1回だけ渡す）。失敗は metric 単位で隔離。
 - `metrics/`: `DataBundle` → `MetricResult` のみ。データ取得・出力をしない。`_` 始まりのモジュールは自動探索の対象外。
-- `report/`: 出力形式の処理（parquet / csv / xlsx / run_info.json）。
+- `report/`: 出力形式の処理（parquet / csv / xlsx / run_info.json）。日付ごとの断面（`output.by_date`）は
+  `date` 列を持つテーブルを report 側で切り出すだけで、metric 側の対応は不要（時系列のテーブルには `date` 列を持たせる）。
 
 ## 規約
 
