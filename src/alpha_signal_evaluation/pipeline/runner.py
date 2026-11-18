@@ -10,12 +10,16 @@ pipeline のうち「計算の実行」を担う層。データの読み込み�
   実行する。DataBundle は initializer でワーカープロセスごとに1回だけ渡し
   （タスクごとの pickle を避ける）、各タスクには metric のキーとインスタンスだけを渡す。
 - 結果は完了順によらず、渡された metrics の順序（config の順序）で返す。
+- 完了の通知: ``on_result`` を渡すと、metric が1つ終わるたびに（成功・失敗とも）その
+  MetricRun を渡して呼ぶ。途中でプロセスが落ちてもそれまでの結果を残せるよう、呼び出し側
+  （``api.evaluate(save=...)``）が逐次書き出すために使う。ここでは書き出しを扱わない。
 """
 
 import logging
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from collections.abc import Callable
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 
 from ..data.bundle import DataBundle
@@ -94,7 +98,10 @@ def _run_in_worker(key: str, metric: Metric) -> MetricRun:
 
 
 def run_metrics(
-    metrics: dict[str, Metric], data: DataBundle, n_jobs: int = 1
+    metrics: dict[str, Metric],
+    data: DataBundle,
+    n_jobs: int = 1,
+    on_result: Callable[[MetricRun], None] | None = None,
 ) -> dict[str, MetricRun]:
     """metrics（キー -> インスタンス）を実行し、config の順序で結果を返す。
 
@@ -107,10 +114,19 @@ def run_metrics(
     metric の失敗で例外は送出しない。各 metric の完了時に、成功なら INFO（経過時間）、
     失敗なら ERROR（トレースバック付き）でログを出す。
 
+    ``on_result`` は metric が1つ終わるたびに、このプロセス（並列時も親プロセス）で
+    完了順に呼ぶ。``on_result`` が例外を送出しても、ERROR のログを出して実行を続ける
+    （書き出しの失敗で計算結果を失わないため）。
+
+    Ctrl-C などで中断された場合（``KeyboardInterrupt`` 等が送出される）、並列実行では
+    その時点で終わっている metric を ``on_result`` に渡したうえで、実行中のワーカーを
+    止め、残りの metric は実行しない（実行中だった metric の結果は残らない）。
+
     Args:
         metrics: metric のキー -> Metric インスタンス（config の順序）。
         data: 時点合わせ済みのデータ。
         n_jobs: 並列に使うプロセス数の上限。1 以下なら逐次実行。
+        on_result: metric が終わるたびに MetricRun を渡して呼ぶ関数（成功・失敗とも）。
 
     Returns:
         metric のキー -> MetricRun。順序は ``metrics`` と同じ（完了順ではない）。
@@ -120,10 +136,12 @@ def run_metrics(
         for key, metric in metrics.items():
             logger.info("Running metric %s", key)
             runs[key] = _run_one(key, metric, data)
-            _log(runs[key])
+            _done(runs[key], on_result)
     else:
         workers = min(n_jobs, len(metrics))
-        with ProcessPoolExecutor(workers, initializer=_init_worker, initargs=(data,)) as pool:
+        pool = ProcessPoolExecutor(workers, initializer=_init_worker, initargs=(data,))
+        futures: dict[Future, str] = {}
+        try:
             futures = {pool.submit(_run_in_worker, k, m): k for k, m in metrics.items()}
             for future in as_completed(futures):
                 key = futures[future]
@@ -131,8 +149,52 @@ def run_metrics(
                     runs[key] = future.result()
                 except Exception:  # pickle の失敗やワーカーの異常終了
                     runs[key] = MetricRun(key, metrics[key].name, error=traceback.format_exc())
-                _log(runs[key])
+                _done(runs[key], on_result)
+        except BaseException:
+            # Ctrl-C など: 既に終わっている metric は on_result に渡し、残りは実行せずに止める
+            for future, key in futures.items():
+                if key not in runs and future.done() and not future.cancelled():
+                    if future.exception() is None:
+                        runs[key] = future.result()
+                        _done(runs[key], on_result)
+            _stop_pool(pool)
+            raise
+        pool.shutdown(wait=True)
     return {key: runs[key] for key in metrics}
+
+
+def _stop_pool(pool: ProcessPoolExecutor) -> None:
+    """中断されたプールを、残りの metric を実行させずに止める。
+
+    ``ProcessPoolExecutor`` を ``with`` で抜ける（``shutdown(wait=True)``）と、キューに
+    残っている metric をワーカーがすべて実行し終えるまで待ってしまう。ここでは実行中の
+    ワーカーを終了させ、キューの metric を取り消して、すぐ呼び出し側に戻る。
+    Python 3.14 以降は公開メソッド ``terminate_workers()`` を使い、それより前は内部の
+    ワーカー一覧（``_processes``）を使う。どちらも使えなければ、実行中の metric が終わるのを
+    待ってから戻る（キューの metric は取り消す）。
+    """
+    terminate = getattr(pool, "terminate_workers", None)
+    if terminate is not None:
+        terminate()
+        return
+    processes = getattr(pool, "_processes", None)
+    if processes is None:
+        pool.shutdown(wait=True, cancel_futures=True)
+        return
+    for process in list(processes.values()):
+        process.terminate()
+    pool.shutdown(wait=False, cancel_futures=True)
+
+
+def _done(run: MetricRun, on_result: Callable[[MetricRun], None] | None) -> None:
+    """完了した metric をログに出し、``on_result`` があれば呼ぶ（その例外は記録して続行する）。"""
+    _log(run)
+    if on_result is None:
+        return
+    try:
+        on_result(run)
+    except Exception:
+        logger.exception("on_result failed for metric %s", run.key)
 
 
 def _log(run: MetricRun) -> None:

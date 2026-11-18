@@ -4,6 +4,9 @@
 IC・分位分析・カテゴリ分析・アルファディケイ・自己相関・ファクター間相関などを、
 `config.yaml` を渡す CLI と、DataFrame を直接渡せる Python API の両方から実行できる。
 
+**マニュアルは [docs/](docs/README.md) にある。** 設計思想、仕様、config.yaml の全項目、組み込み metric、
+metric の追加方法、AI チャットに metric を書かせるためのプロンプトをまとめている。この README は要点だけを載せる。
+
 ## セットアップ
 
 ```sh
@@ -31,6 +34,17 @@ uv run alpha-eval metrics list -v        # 登録済み metric とパラメー�
 （または日付のリスト）を指定すると、日付ごとの断面も `<output.dir>/by_date/<日付>/<metric>/<table>.csv` に書き出す
 （`date` 列を持つ全テーブルをその日付の行だけに切り出したもの。リバランス時点ごとに全シグナルを見比べる用途）。
 
+`alpha-eval run` は metric が1つ終わるたびに結果を書き出すので、途中でプロセスが落ちても（強制終了・Ctrl-C・
+データ読み込み中の例外）、それまでに終わった metric の csv / parquet は残る。どこまで終わったかは
+`run_info.json` の `state`（`running` のまま = 強制終了、`aborted` = 例外や Ctrl-C で中断、`finished` = 完了）と
+`pending`（まだ結果のない metric）で分かる。xlsx は1つのブックなので最後にまとめて書く
+（例外や Ctrl-C で中断した場合は、その時点までの分を書く。強制終了では書かれない）。
+並列実行（`n_jobs` > 1）中に Ctrl-C で中断した場合、実行中だった metric の結果は残らない。
+
+同じ出力先に再実行すると、`run_info.json` は開始時に、`summary` は metric が終わるたびに今回の内容で置き換わる。
+再実行が途中で止まると、まだ終わっていない metric のディレクトリには以前の実行のファイルが残る（`pending` に
+載っている metric のファイルは以前の実行のもの）。以前の結果を残したい場合は `--output-dir` で出力先を分ける。
+
 サンプル（いずれも合成データを生成して評価する）:
 
 - [examples/example1](examples/example1): 日次の日付キー（`{Label2}` 等）・one-hot の業種分類
@@ -53,6 +67,7 @@ report["ic"].tables["summary"]        # metric ごとの表
 report.summary()                      # 全 metric の要約（long 形式）
 report.errors                         # 失敗した metric（他の結果は返る）
 report.save()                         # config の output 設定で書き出し
+evaluate("config.yaml", save=True)    # 完了した metric から順に書き出す（途中で落ちても結果が残る。CLI はこの動作）
 report.at("20240531")["ic"]["timeseries"]  # ある日付の断面（その日付の全シグナルの行）
 
 # 手元の DataFrame で評価する（io 層をバイパス）

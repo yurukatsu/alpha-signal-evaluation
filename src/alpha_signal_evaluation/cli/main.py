@@ -86,10 +86,13 @@ def run(
     """config.yaml に従って評価を実行し、結果を書き出す。
 
     \f
-    config を読み込んで ``api.evaluate()`` で評価し、``EvaluationReport.save()`` で
-    結果を書き出す。書き出し先は ``--output-dir``（省略時は config の ``output.dir``）、
-    形式は config の ``output.formats``、日付ごとの断面を出すかは config の
-    ``output.by_date``。``--output-dir`` の相対パスは実行ディレクトリ基準。
+    config を読み込んで ``api.evaluate(save=...)`` で評価し、完了した metric から順に
+    結果を書き出す（途中でプロセスが落ちても、それまでに終わった metric の結果と
+    run_info.json が残る。出力先に以前の実行の結果がある場合、開始時から今回の内容で
+    置き換えていくので、以前の結果を残したいときは出力先を分ける）。
+    書き出し先は ``--output-dir``（省略時は config の ``output.dir``）、形式は config の
+    ``output.formats``、日付ごとの断面を出すかは config の ``output.by_date``。
+    ``--output-dir`` の相対パスは実行ディレクトリ基準。
     その後、警告を黄色で、metric ごとの実行状況（metric / name / status / elapsed_sec）の
     表と出力先を表示する。
 
@@ -107,12 +110,12 @@ def run(
         typer.Exit: config の誤り、または失敗した metric がある場合（終了コード 1）。
     """
     cfg = _load(config)
+    out = Path(output_dir or cfg.output.dir)
     try:
-        report = evaluate(cfg, n_jobs=n_jobs)
+        report = evaluate(cfg, n_jobs=n_jobs, save=out)
     except ConfigValidationError as e:
         typer.secho(str(e), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from None
-    out = report.save(output_dir)
     for w in report.warnings:
         typer.secho(f"warning: {w}", fg=typer.colors.YELLOW, err=True)
     typer.echo(report.status().drop(columns="error").to_string(index=False))
