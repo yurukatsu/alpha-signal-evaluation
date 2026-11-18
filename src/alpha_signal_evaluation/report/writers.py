@@ -239,6 +239,59 @@ def write_by_date(
                 _write_files(fresh, target, fmt)
 
 
+_TABLE_SUFFIXES = frozenset({".csv", ".parquet"})
+
+
+def clear_metric_files(directory: Path, key: str, suffixes: Collection[str]) -> None:
+    """以前の実行で書いた、ある metric の表のファイルを消す（書き直す前に呼ぶ）。
+
+    対象は ``<directory>/<key>/`` と ``<directory>/by_date/<日付>/<key>/`` の中の、拡張子が
+    ``suffixes`` のファイル（書きかけの一時ファイル ``.tmp-*`` を含む）だけ。それ以外の
+    ファイルとディレクトリには触れない。空になったディレクトリは消す。
+
+    今回の実行で書かない表（失敗した metric の表、今回は行のない日付の断面、metric の
+    変更でなくなった表）が以前の実行のまま残り、今回の結果と取り違えられるのを防ぐ。
+    metric のキーは config（``id``）と登録（``name``）で文字種を制限しているが、念のため
+    出力先の直下を指さないキーは何もしない。シンボリックリンクのディレクトリとファイルは
+    たどらず、消さない（出力先の外のファイルを消さないため）。
+
+    Args:
+        directory: 出力先ディレクトリ。
+        key: metric のキー。
+        suffixes: 消すファイルの拡張子（例: ``{".csv"}``）。
+    """
+    if Path(key).name != key or key in (".", ".."):
+        logger.warning("Skip clearing files for an unsafe metric key %r", key)
+        return
+    targets = [directory / key]
+    by_date = directory / _BY_DATE_DIR
+    if by_date.is_dir() and not by_date.is_symlink():
+        days = [d for d in sorted(by_date.iterdir()) if d.is_dir() and not d.is_symlink()]
+        targets += [day / key for day in days]
+    for target in targets:
+        if target.is_symlink() or not target.is_dir():
+            continue
+        for path in target.iterdir():
+            if path.is_file() and not path.is_symlink() and path.suffix.lower() in suffixes:
+                path.unlink()
+        for empty in (target, target.parent):
+            if empty in (directory, by_date) or empty.is_symlink() or not empty.is_dir():
+                continue
+            if not any(empty.iterdir()):
+                empty.rmdir()
+
+
+def table_suffixes(formats: Iterable[OutputFormat], ok: bool) -> frozenset[str]:
+    """``clear_metric_files`` で消す拡張子。
+
+    成功した metric は今回書く形式（csv / parquet）のファイルだけを置き換え、ほかの形式の
+    ファイルは残す。失敗した metric は今回の表がないので、csv / parquet をすべて消す。
+    """
+    if not ok:
+        return _TABLE_SUFFIXES
+    return frozenset(f".{fmt}" for fmt in formats if fmt != "xlsx")
+
+
 def write_tables(
     report: "EvaluationReport", directory: Path, fmt: OutputFormat, skip: Collection[str] = ()
 ) -> None:
@@ -271,7 +324,9 @@ def write_report(
     ``by_date/<date>/`` に書く。run_info.json は形式によらず、すべて書き終えた最後に書く
     （``state: finished`` が残っていれば、断面まで含めて書けている）。断面を書く場合は、
     その前にも ``state: running`` で書いておく（断面の書き出しに失敗しても実行の記録は残る）。
-    既存のファイルは上書きする（以前の実行で書いたファイルは消さない）。
+    既存のファイルは上書きする。``report`` の metric（``skip`` を除く）については、書く前に
+    以前の実行の表（成功した metric は今回書く形式、失敗した metric は csv / parquet の
+    すべて）を消す（``clear_metric_files``）。``report`` にない metric のファイルには触れない。
 
     Args:
         report: 書き出す評価結果。
@@ -290,6 +345,10 @@ def write_report(
     """
     directory.mkdir(parents=True, exist_ok=True)
     formats = list(dict.fromkeys(formats))
+    # 以前の実行の表を、今回書く metric の分だけ消してから書く（失敗した metric は全部）
+    for key, run in report.runs.items():
+        if key not in skip:
+            clear_metric_files(directory, key, table_suffixes(formats, run.ok))
     for fmt in formats:
         if fmt == "xlsx":
             front = {"summary": report.summary(), "status": report.status()}

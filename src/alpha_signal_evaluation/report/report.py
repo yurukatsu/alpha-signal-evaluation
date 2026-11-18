@@ -190,6 +190,8 @@ class EvaluationReport:
           csv は UTF-8（BOM 付き）。
         - xlsx: ``<directory>/report.xlsx``（summary・status シートと各テーブルのシート）。
         - 形式によらず ``<directory>/run_info.json``（状態・エラー・警告・注記・config）。
+        - 書く前に、``runs`` の metric の以前の表（成功した metric は今回書く形式、失敗した
+          metric は csv / parquet のすべて）を消す。ほかの metric のファイルには触れない。
         - ``by_date`` を指定した場合: 日付ごとの断面（``by_date()``）を同じ形式で
           ``<directory>/by_date/<date>/<key>/<table>.<ext>`` と
           ``<directory>/by_date/<date>/report.xlsx`` に書く。

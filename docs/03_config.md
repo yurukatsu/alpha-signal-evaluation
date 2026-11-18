@@ -152,7 +152,7 @@ nri_code,ret,sret
    uv run alpha-eval run config.yaml                     # 実行する
    ```
 
-   検証はデータの中身を読まないので、列名の誤りなどは `run` で初めて見つかります（[検証を通っても実行時に出るエラー](#検証を通っても実行時に出るエラー)）。
+   検証は各ファイルソースの最初のファイルの見出しで列名を確かめますが、値の中身（重複や数値でない値）は読まないので、そうした誤りは `run` で初めて見つかります（[検証を通っても実行時に出るエラー](#検証を通っても実行時に出るエラー)）。
    最初は `period` で評価期間を数行に絞り、`metrics` を1つだけにして試すと、短い時間で確かめられます。
 
 ### 相対パスの基準
@@ -177,7 +177,7 @@ nri_code,ret,sret
 
 未知のキーは、どの階層でもエラーになります（キー名の書き間違いを計算前に見つけるため）。
 例外は、中身を自由に書けるマッピングである `read_options`、`columns`、`factor_groups` です。これらの中のキーは構造の検証では確認されません
-（`columns` の role 名を間違えた場合の挙動は [検証を通っても実行時に出るエラー](#検証を通っても実行時に出るエラー) を参照）。
+（`columns` の role 名を間違えると、必要な role の対応がないものとして意味の検証でエラーになります。[意味の検証で出るエラー](#意味の検証で出るエラー) を参照）。
 `metrics` の `params` の中身は、metric ごとの定義に照らして意味の検証で確認されます。
 
 ### 検証は2段階
@@ -380,7 +380,7 @@ role は、列の意味を表す内部の名前です。ソースごとに異な
 
 単一ファイルと DB のソースでは、どの用途でも、これに加えて `date` が必要です。
 
-role の不足や列名の誤りは、検証（`alpha-eval validate`）では見つからず、データを読む時点でエラーになります（[検証を通っても実行時に出るエラー](#検証を通っても実行時に出るエラー)）。
+role の対応の不足は、意味の検証でエラーになります（ファイルを読まないので `--skip-files` でも見つかります）。`columns` に書いた列がファイルにない場合は、ファイルの存在の確認に続けて、各ソースの最初のファイルの見出しを読んで見つけます（[意味の検証で出るエラー](#意味の検証で出るエラー)）。ファイルによって列が違う場合（途中のファイルだけ列名が変わっているなど）は、データを読む時点でエラーになります（[検証を通っても実行時に出るエラー](#検証を通っても実行時に出るエラー)）。
 
 ## 4. data（signals・classification）
 
@@ -651,8 +651,9 @@ metrics:
 ```
 
 - `name` には、登録されている metric の名前を書きます。組み込みの8つの一覧は [04 の 2 章](04_metrics.md#2-metric-一覧) にあります。
-- `id` は出力のディレクトリ名にそのまま使われ、検証では文字の種類を確認しないので、英数字と `_`、`-` だけで付けてください
-  （`/` を含む `ic/spearman` は検証を通り、`ic/spearman/` という入れ子のディレクトリに書かれます。`../` で始めると出力先の外に書かれます）。
+- `id` は出力のディレクトリ名になるので、英数字で始まる英数字・`_`・`-` だけ（64文字まで）で付けます。
+  `/` や `..` を含む id（`ic/spearman`、`../x` など）、大文字・小文字の違いだけで他のキーと重なる id（`ic` と `IC`）、
+  `by_date` は、構造の検証でエラーになります（大文字・小文字を区別しないファイルシステムでは同じディレクトリになるため）。
 - 多くの metric は `signals`、`returns`、`horizons` というパラメータを持ちます。省略すると、config で定義したすべてが対象になります。
   `horizons` は、トップレベルの `horizons` に含まれる値だけを指定できます（[04 の 1.2](04_metrics.md#12-共通パラメータ-signals--returns--horizons)）。
 - `params` の中身は、metric ごとの定義に照らして検証されます。未知のパラメータはエラーになります。
@@ -700,9 +701,11 @@ output:
 - `alpha-eval run` と `evaluate(save=...)` は、metric が1つ終わるたびに、その metric の表と日付ごとの断面（csv / parquet）、要約、`run_info.json` を書きます。
   xlsx だけは最後（例外や Ctrl-C で中断した場合はその時点）にまとめて書くので、プロセスが強制終了されると、その実行の xlsx は書かれません。
   どこまで書けたかは `run_info.json` の `state` と `pending` で分かります（[02 の 6.5](02_features.md#65-逐次書き出し途中で落ちたときに残るもの)）。
-- 出力先に以前の実行のファイルがあっても消しません。同じ出力先で実行し直すと、`run_info.json` は開始時に、要約は metric が1つ終わるたびに、
+- 同じ出力先で実行し直すと、`run_info.json` は開始時に、要約は metric が1つ終わるたびに、
   各 metric の表と断面はその metric が終わったときに、`report.xlsx` は最後（中断した場合はその時点）に、今回の内容で置き換わります。
-  途中で止まった場合、`pending` に残った metric のディレクトリにあるのは前回の実行のファイルです。今回の実行で失敗した metric と、config から外した metric のディレクトリも前回のまま残ります。
+  metric の表と断面（csv / parquet）は、書く前にその metric の以前の表を消してから書くので、今回の実行で失敗した metric のディレクトリに前回の csv / parquet は残りません。
+  `report.xlsx`（`by_date/<日付>/report.xlsx` を含む）は今回 xlsx を書いたときだけ置き換わるので、xlsx を書かない実行や、今回どの表にも行がない日付のブックには、前回の内容が残ります。
+  途中で止まった場合、`pending` に残った metric のディレクトリにあるのは前回の実行のファイルです。config から外した metric のディレクトリも前回のまま残ります。
   以前の結果を残したい場合や、混ざるのを避けたい場合は、出力先を分けてください（CLI は `--output-dir`、Python API は `save=<ディレクトリ>`）。
 - 出力されるファイルの構成と `run_info.json` の各キーは、[02 の 6.1](02_features.md#61-ディレクトリ構成と形式) と [6.3](02_features.md#63-run_infojson) にあります。
 
@@ -781,8 +784,8 @@ error: metrics[ic]: unknown return series ['specific']; available: ['total']
 
 - `warning:` は、評価はできるが結果に影響しうる事項です。`error:` が1つでもあると評価は始まりません。
 - 各行の先頭は config 上の位置です（`data.signals[0]` は `data.signals` の1番目、`metrics[ic]` はキーが `ic` の metric）。
-- 意味の検証のエラーは、最初の1つで止めず、すべてまとめて表示します。データファイル（`source: file` の `path`）の存在の確認だけは、ほかのエラーがなくなってから行います。
-- `--skip-files` は、ファイル数が多いときや、データのない環境で設定だけを確かめたいときに使います。省くのはデータファイルの存在の確認だけで、カレンダーファイルと SQL ファイルの存在は常に確認します。
+- 意味の検証のエラーは、最初の1つで止めず、すべてまとめて表示します。データファイル（`source: file` の `path`）の存在の確認は、ほかのエラーがなくなってから行い、ファイルがすべてそろっていれば、続けて各ファイルソースの最初のファイルの見出しで列名を確認します。
+- `--skip-files` は、ファイル数が多いときや、データのない環境で設定だけを確かめたいときに使います。省くのはデータファイルの存在の確認と、見出しでの列名の確認です。カレンダーファイルと SQL ファイルの存在、`columns` の role の対応は常に確認します。
 - `alpha-eval run` が同じエラーを見つけた場合は、`Config validation failed:` という行に続けて、同じメッセージが `error:` の代わりに `  - ` で始まる行として並びます。
 
 構造の検証で見つかったエラーは、次の形で表示されます。`calendar.indx` の行が config 上の位置、その次の行が内容です。
@@ -830,6 +833,9 @@ Python API では、`validate(config, check_files=False)` が `--skip-files` に
 | `n_jobs` が 0 以下 | `execution.n_jobs` | `Input should be greater than or equal to 1` |
 | `formats` の値が違う | `output.formats.0` | `Input should be 'parquet', 'xlsx' or 'csv'` |
 | `formats` や `horizons` をリストにしていない | そのキー | `Input should be a valid list` |
+| metric の `id` に使えない文字がある（例: `../x`、`ic/spearman`） | `metrics.0.id` | `String should match pattern '^[A-Za-z0-9][A-Za-z0-9_-]*$'` |
+| metric のキーが大文字・小文字の違いだけで重なる（例: `ic` と `IC`） | （位置の表示なし） | `Value error, Metric keys ['IC', 'ic'] differ only in upper/lower case; they are used as directory names, so make them differ in more than case` |
+| metric のキーが `by_date`（日付ごとの断面のディレクトリ名） | （位置の表示なし） | ``Value error, Metric keys ['by_date'] are reserved for output directories; use another `id` `` |
 | `portfolios` に要素を書いた | `portfolios` | `Value error, portfolios is reserved for a future version and not supported yet` |
 
 YAML として読めないファイルと、トップレベルがマッピングでないファイル（`Config file must be a YAML mapping: ...`）は、整形されたメッセージではなく Python の例外として表示されます。
@@ -864,23 +870,33 @@ YAML として読めないファイルと、トップレベルがマッピング
 | `output.by_date` の日付が評価期間にない | `output.by_date: dates ['20100131'] are not in the evaluation period (20190329..20260731, 89 dates)` |
 | 日付ごとのファイルが足りない | `data.signals[0]: 89 of 89 files not found: .../20190328.csv, ... (and 86 more)` |
 | 単一ファイルがない | `data.signals[0]: file not found: ...` |
+| `columns` に必要な role の対応がない（[3 章](#columns-role-と実カラム名の対応)の表） | `data.signals[0].columns: no column is mapped to required role(s) ['asset_id']; add e.g. columns: {asset_id: <column name>}` |
+| `columns` に書いた列がファイルにない | `data.signals[0].columns: columns ['code'] not found in .../20190328.csv; available: ['nri_code', 'score'] (if the file has no header row, ...)` |
+| ヘッダーのないファイルに、`read_options` の `header: null` と `names` を書いていない | 上と同じメッセージで、`available` にデータの1行目が並びます（`available: ['01346', '0.1']`） |
+| `values` に書いた列がファイルにない | `data.signals[0].values: columns ['scores'] not found in .../20190328.csv; available (after renaming by columns): ['asset_id', 'score']` |
+| `series` の `column` に書いた列がファイルにない | `returns[0].series: columns ['rets'] not found in .../20190329.csv; available (after renaming by columns): ['asset_id', 'ret', 'sret']` |
+
+`no column is mapped to required role(s)` に出る role が `date` の場合は、単一ファイルか DB のソースに `date` の指定がありません。
+`category` の場合は、分類のソースに `category` の指定も `one_hot: true` もありません。
+role 名を書き間違えた場合（例: `asset_id` を `asset`）も、必要な role がないものとして同じエラーになります。
+ただし、任意の role である `universe` の `weight` を書き間違えた場合はエラーにならず、ユニバースのウェイトがベンチマークウェイトとして使われないだけになります。
+
+role の対応の確認はファイルを読まずに行うので、`--skip-files` でも行います。列名の確認は、データファイルがすべてそろっているときに、ソースごとに評価に使う最初のファイルの見出しだけを読んで行います（`--skip-files` では省きます）。DB のソースは、role の対応だけを確認します（列名は SQL を実行しないと分からないため）。
 
 `requires data that is not configured` に出る名前と config の対応は、`signals` が `data.signals`、`classification` が `data.classification`、`forward_returns` が `returns` です。
 
 ### 検証を通っても実行時に出るエラー
 
-検証はデータの中身を読まず（カレンダーを除く）、DB への接続も試しません。そのため次の誤りは、`alpha-eval run` や `evaluate()` がデータを読む時点で、Python の例外になります。
+検証は、ファイルソースの最初のファイルの見出しのほかは、データの中身を読みません（カレンダーを除く）。DB への接続も試しません。そのため次の誤りは、`alpha-eval run` や `evaluate()` がデータを読む時点で、Python の例外になります。
 CLI ではトレースバックが表示され、その末尾に下の表のメッセージが出ます（長いメッセージは複数の行に折り返されます）。終了コードは 1 です。
 metric の計算はまだ始まっていないので、出力先に書かれるのは `run_info.json` だけで、その `state` は `aborted`、`pending` は全 metric になります
 （結果を書き出さない `evaluate()` の呼び出しでは、何も書かれません）。
 
-config の書き方の誤りで出るもの:
+config の書き方の誤りのうち、検証では見つからず、データを読む時点で出るもの（最初のファイルにはあるが、途中のファイルで列名が変わっている場合と、DB のソースの場合）:
 
 | 設定ミス | 例外のメッセージ |
 |---|---|
-| 必要な role を `columns` に書いていない | `ValueError: Missing role mappings: ['asset_id']` |
 | `columns` に書いた列がデータにない | `ValueError: Missing expected columns in DataFrame: ['code']. Available: ['nri_code', 'score']` |
-| ヘッダーのないファイルに、`read_options` の `header: null` と `names` を書いていない | 上と同じメッセージで、`Available` にデータの1行目が並びます（`... ['nri_code']. Available: ['01346', '-0.1']`） |
 | `values` に書いた列がデータにない | `ValueError: Signal columns ['scores'] not found in .../{Label2}.csv. Available: ['date', 'asset_id', 'score']` |
 | `series` の `column` に書いた列がデータにない | `KeyError: 'rets'` |
 
@@ -903,10 +919,6 @@ DB を使う場合に出るもの（検証は環境変数が設定されてい�
 | DB の種類に対応するドライバーをインストールしていない（[10. DB 接続の設定](#10-db-接続の設定)） | `ModuleNotFoundError: No module named 'pymysql'`（MySQL の場合。SQL Server は `'pyodbc'`、PostgreSQL は `'psycopg2'`） |
 | DB に接続できない（環境変数のホスト名の誤り、ネットワークの不通など） | MySQL の例: `OperationalError: (pymysql.err.OperationalError) (2003, "Can't connect to MySQL server on '<ホスト名>' ([Errno 61] Connection refused)")`。PostgreSQL の例: `OperationalError: (psycopg2.OperationalError) connection to server at "<ホスト名>", port 5432 failed: Connection refused`。文面は DB の種類、原因、実行環境によって変わります |
 
-`Missing role mappings` に出る role が `date` の場合は、単一ファイルか DB のソースに `date` の指定がありません。
-`category` の場合は、分類のソースに `category` の指定も `one_hot: true` もありません。
-role 名を書き間違えた場合（例: `asset_id` を `asset`）も、必要な role がないものとして同じエラーになります。
-ただし、任意の role である `universe` の `weight` を書き間違えた場合はエラーにならず、ユニバースのウェイトがベンチマークウェイトとして使われないだけになります。
 
 ### 実行時に出る警告
 

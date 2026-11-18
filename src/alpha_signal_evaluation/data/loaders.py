@@ -148,6 +148,44 @@ def _read_file(source: FileSource, path: Path) -> pd.DataFrame:
         raise type(e)(f"Failed to read {path}: {e}") from e
 
 
+def read_columns(source: FileSource, path: Path) -> list:
+    """ファイルを読み込み時と同じオプションで開き、列名だけを返す（validation 用）。
+
+    CSV 系は ``nrows=0`` で見出しだけを読む（``read_options`` によって ``nrows`` を
+    使えない場合はファイル全体を読む）。parquet は ``read_options`` がなければスキーマから
+    列名を取り（pandas が保存した index の列は除く）、あれば読み込み時と同じオプションで読む
+    （``columns`` で列を絞る指定や、parquet に使えないオプションを読み込み時と同じに扱うため）。
+    pickle はファイル全体を読む。列名は読み込み時と同じく、
+    CSV 系では先頭の ``#`` と前後の空白を除いたもの。
+
+    Args:
+        source: ファイルソース。
+        path: 読むファイル（テンプレートを埋めたもの）。
+
+    Returns:
+        列名のリスト（ヘッダーのないファイルで ``names`` を指定していなければ、1行目の値
+        や整数の列番号になる。読み込み時と同じ）。
+
+    Raises:
+        Exception: ファイルを読めない場合（メッセージにパスを含める）。
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".parquet" and not source.read_options:
+        import pyarrow.parquet as pq
+
+        schema = pq.read_schema(path)
+        meta = schema.pandas_metadata or {}
+        index = {c for c in meta.get("index_columns", []) if isinstance(c, str)}
+        return [name for name in schema.names if name not in index]
+    if suffix in _CSV_SUFFIXES:
+        options = {**_read_options(source, path), "nrows": 0}
+        try:
+            return list(read_table(path, **options).columns)
+        except ValueError:
+            pass  # skipfooter など nrows と併用できないオプションの場合は全体を読む
+    return list(_read_file(source, path).columns)
+
+
 def _load_partitioned(
     source: FileSource,
     rows: pd.DataFrame,

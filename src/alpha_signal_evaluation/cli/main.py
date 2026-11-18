@@ -129,7 +129,9 @@ def run(
 @app.command("validate")
 def validate_command(
     config: ConfigArg,
-    skip_files: Annotated[bool, typer.Option(help="Skip checking file existence")] = False,
+    skip_files: Annotated[
+        bool, typer.Option(help="Skip checking data files (existence and column names)")
+    ] = False,
 ) -> None:
     """計算せずに config を検証する（構造・意味・ファイルの存在）。
 
@@ -139,7 +141,7 @@ def validate_command(
 
     Args:
         config: config.yaml のパス。
-        skip_files: データファイルの存在確認を省略するか（``--skip-files``）。
+        skip_files: データファイルの確認（存在と、見出しの列名）を省略するか（``--skip-files``）。
 
     Raises:
         typer.Exit: 構造または意味の検証でエラーがあった場合（終了コード 1）。

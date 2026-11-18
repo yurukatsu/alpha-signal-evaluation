@@ -9,11 +9,14 @@
 - metric 名がレジストリにあるか、``params`` が metric の ``Params`` に合うか、
   metric が要求するデータ（``requires``）やシグナル名・系列名・ホライズンが config にあるか
 - ``output.by_date`` に列挙した日付が評価期間にあるか
-- 必要なファイルがすべて存在するか（任意）
+- 各データソースの ``columns`` に、読み込みに必要な role の対応が書かれているか
+- 必要なファイルがすべて存在するか、各ファイルソースの最初のファイルに ``columns`` の列と
+  シグナルの ``values``・リターンの ``series`` の列があるか（任意）
 
 計算を始める前に設定ミスをすべて集めて一覧で報告する（最初のエラーで止めない）。
-データの中身は読まない（カレンダーを除く）。レイヤー上は api から呼ばれ、
-data / io / metrics / pipeline の関数を参照するが、DataBundle は組み立てない。
+データの中身は読まない（カレンダーと、ファイルソースの最初のファイルの見出しを除く）。
+レイヤー上は api から呼ばれ、data / io / metrics / pipeline の関数を参照するが、
+DataBundle は組み立てない。
 """
 
 import re
@@ -34,16 +37,17 @@ from .config import (
 from .data import barra
 from .data.bundle import DataSpec
 from .data.calendar import Calendar, check_increasing, load_calendar
-from .data.columns import WEIGHT
-from .data.loaders import partition_paths
+from .data.columns import DATE, WEIGHT
+from .data.loaders import partition_paths, read_columns
 from .io.db import CONNECTIONS, get_connection_config, missing_settings
 from .io.file import SUPPORTED_SUFFIXES
 from .metrics.base import Metric
 from .metrics.registry import get_metric
-from .pipeline.preprocess import EvaluationPlan, make_plan
+from .pipeline.preprocess import EvaluationPlan, make_plan, source_requirements
 
 _DATE_OR_MONTH = re.compile(r"^\d{6}(\d{2})?$")
 _MAX_EXAMPLES = 3
+_MAX_COLUMNS_SHOWN = 20
 
 
 class ConfigValidationError(ValueError):
@@ -385,6 +389,112 @@ def _missing_files(
     return [f"{label}: {len(missing)} of {len(paths)} files not found: {examples}{more}"]
 
 
+def _component(label: str) -> str:
+    """``_iter_sources`` のラベルから、``source_requirements`` に渡すソースの種類を返す。"""
+    if label.startswith("data.signals"):
+        return "signals"
+    if label.startswith("returns"):
+        return "returns"
+    return label.rsplit(".", 1)[-1]  # data.classification / universe / risk_models.<名前>.<要素>
+
+
+def _required_roles(label: str, source: FileSource | DBSource) -> frozenset[str]:
+    """ソースの ``columns`` に対応が必要な role（読み込み処理と同じ規則）。
+
+    日付パーティションされたファイルは日付をカレンダーから付けるので ``date`` は不要、
+    単一ファイルと DB はデータの日付列を使うので ``date`` が必要。
+    """
+    roles, _ = source_requirements(_component(label), source)
+    if isinstance(source, FileSource) and source.is_partitioned:
+        return roles - {DATE}
+    return roles | {DATE}
+
+
+def _check_role_mappings(label: str, source: FileSource | DBSource) -> list[str]:
+    """``columns`` に、読み込みに必要な role の対応がすべて書かれているかを確認する。
+
+    実カラム名が role 名と同じでも対応を書く必要がある（``{asset_id: asset_id}``）。
+    ファイルを読まずに分かるので、ファイルの確認を省略した場合も行う。
+
+    Returns:
+        足りない role があればメッセージ1件のリスト。
+    """
+    missing = sorted(_required_roles(label, source) - set(source.columns))
+    if not missing:
+        return []
+    example = ", ".join(f"{role}: <column name>" for role in missing)
+    return [
+        f"{label}.columns: no column is mapped to required role(s) {missing}; "
+        f"add e.g. columns: {{{example}}}"
+    ]
+
+
+def _first_file(source: FileSource, is_period: bool, plan: EvaluationPlan) -> Path | None:
+    """列名の確認に使うファイル（評価に使うファイルのうち最初のもの）。なければ ``None``。"""
+    if not source.is_partitioned:
+        return Path(source.path)
+    if is_period:
+        rows = plan.ext_rows[~plan.ext_rows[plan.calendar.index].isin(plan.optional_keys)]
+    else:
+        rows = plan.eval_rows
+    for path in partition_paths(source, rows, plan.calendar.index).values():
+        if path.is_file():
+            return path
+    return None
+
+
+def _shown(columns: list) -> str:
+    """エラーメッセージに載せる列名の一覧（多ければ先頭だけ）。"""
+    head = [str(c) for c in columns[:_MAX_COLUMNS_SHOWN]]
+    more = f" ... ({len(columns)} columns)" if len(columns) > _MAX_COLUMNS_SHOWN else ""
+    return f"{head}{more}"
+
+
+def _check_file_columns(
+    label: str, source: FileSource, is_period: bool, plan: EvaluationPlan
+) -> list[str]:
+    """ファイルソースの最初のファイルの列名を読み、config の列名と照らす。
+
+    確認するのは、``columns`` に書いた実カラム名がファイルにあること、シグナルの
+    ``values`` とリターンの ``series`` の ``column`` が（role 名へのリネーム後の）列に
+    あること。読むのは見出しだけで、値（数値かどうか、重複など）は確かめない。
+    最初のファイルだけを見るので、ファイルによって列が違う場合は読み込み時まで分からない。
+
+    Returns:
+        エラーメッセージのリスト。
+    """
+    path = _first_file(source, is_period, plan)
+    if path is None or not path.is_file():
+        return []  # ファイルの不足は _missing_files が報告する
+    try:
+        columns = read_columns(source, path)
+    except Exception as e:
+        return [f"{label}: cannot read {path}: {e}"]
+    mapping = dict(source.columns)
+    missing = [c for c in dict.fromkeys(mapping.values()) if c not in columns]
+    if missing:
+        hint = ""
+        if "header" not in source.read_options and "names" not in source.read_options:
+            hint = (
+                " (if the file has no header row, set read_options: {header: null, names: [...]})"
+            )
+        return [
+            f"{label}.columns: columns {missing} not found in {path}; "
+            f"available: {_shown(columns)}{hint}"
+        ]
+    role_of = {actual: role for role, actual in mapping.items()}
+    renamed = [role_of.get(c, c) for c in columns]
+    _, needed = source_requirements(_component(label), source)
+    absent = [c for c in needed if c not in renamed]
+    if not absent:
+        return []
+    key = "values" if _component(label) == "signals" else "series"
+    return [
+        f"{label}.{key}: columns {absent} not found in {path}; "
+        f"available (after renaming by columns): {_shown(renamed)}"
+    ]
+
+
 def _check_connections(cfg: EvaluationConfig) -> list[str]:
     """DB ソースが使う接続先ごとに、ホスト名・認証情報が環境変数から読めるかを確認する。
 
@@ -447,11 +557,13 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
     2. カレンダーを読み込み、``period`` に該当する行があるか（ホライズン分の行が
        カレンダーの末尾に足りなければ警告）
     3. 各データソースの設定（プレースホルダ・``match_on``・拡張子・DB の接続先と SQL、
-       Barra の ``match_on``）
+       Barra の ``match_on``）と、``columns`` に必要な role の対応があるか
     4. DB の接続先ごとのホスト名・認証情報の環境変数
     5. 有効な metric の名前・params・要求データ（``spec_from_config()`` と照合）
        と、``output.by_date`` に列挙した日付が評価期間にあるか
-    6. ``check_files=True`` で、ここまでエラーがなければ、必要なファイルがすべて存在するか
+    6. ``check_files=True`` で、ここまでエラーがなければ、必要なファイルがすべて存在するか。
+       ファイルがすべてあれば、各ファイルソースの最初のファイルの見出しを読み、``columns``・
+       シグナルの ``values``・リターンの ``series`` の列があるか
 
     カレンダーを読めなかった場合は 2・3 を、カレンダーを読めなかったか期間の解決に
     失敗した場合は 5 の ``output.by_date`` の検証と 6 を行わない。
@@ -488,6 +600,8 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
             report.errors += _check_source(label, source, is_period, calendar, plan)
         for label, source, is_period in _iter_barra(cfg):
             report.errors += _check_date_column(label, source.match_on, is_period, calendar, plan)
+    for label, source, _ in _iter_sources(cfg):
+        report.errors += _check_role_mappings(label, source)
 
     report.errors += _check_connections(cfg)
     report.errors += validate_metrics(cfg.enabled_metrics, spec_from_config(cfg))
@@ -499,4 +613,9 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
         for label, source, is_period in _iter_sources(cfg):
             if isinstance(source, FileSource):
                 report.errors += _missing_files(label, source, is_period, plan)
+        # ファイルがそろっていれば、最初のファイルの見出しで列名を確かめる
+        if not report.errors:
+            for label, source, is_period in _iter_sources(cfg):
+                if isinstance(source, FileSource):
+                    report.errors += _check_file_columns(label, source, is_period, plan)
     return report

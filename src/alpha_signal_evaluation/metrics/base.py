@@ -5,7 +5,8 @@
 （``_template.py`` をコピーして始める）。
 
 契約の要点:
-    - ``name``: config.yaml の ``metrics`` から参照する一意な名前（空文字不可）。
+    - ``name``: config.yaml の ``metrics`` から参照する一意な名前。英数字で始まる英数字・
+      ``_``・``-`` だけ（64文字まで。出力のディレクトリ名になるため）。
     - ``description``: ``metrics list`` コマンド等に表示する1行の説明（契約テストで必須）。
     - ``requires``: 使用するデータの宣言。``data.bundle.REQUIREMENTS`` に含まれる名前だけを
       書ける（クラス定義時に検証）。宣言外のデータは契約テストでは空にして渡される。
@@ -182,7 +183,8 @@ class Metric(ABC):
     インスタンスにはパラメータ以外の大きな状態を持たせない。
 
     Attributes:
-        name: config.yaml から参照する一意な名前。必須（空文字不可）。
+        name: config.yaml から参照する一意な名前。必須。英数字で始まる英数字・``_``・``-``
+            だけ（64文字まで）。
         description: ``metrics list`` 等に表示する1行の説明。契約テストで必須。
         requires: 使用するデータの名前の集合。``data.bundle.REQUIREMENTS`` に含まれる名前
             （``signals`` / ``forward_returns`` / ``classification`` / ``risk_models`` /

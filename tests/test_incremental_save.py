@@ -459,3 +459,76 @@ def test_writers_keep_existing_files_when_a_write_fails_midway(bundle, tmp_path,
     assert {n: (out / n).read_bytes() for n in names} == before
     assert _run_info(out)["state"] == "finished"
     assert _files(out) == listing
+
+
+def test_rerun_removes_previous_files_of_a_failed_metric(dataset, monkeypatch):
+    """前回成功した metric が今回失敗したら、その metric の前回の表は残さない。"""
+    config = dataset.write_config(output=OUTPUT)
+    out = dataset.root / "out"
+    evaluate(config, save=True)
+    assert (out / "quantile" / "returns.csv").exists()
+    assert any(out.glob("by_date/*/quantile/returns.parquet"))
+    (out / "notes.txt").write_text("keep")  # 出力が書いたものでないファイルには触れない
+
+    def boom(self, data):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(QuantilePerformance, "compute", boom)
+    evaluate(config, save=True)
+    info = _run_info(out)
+    assert info["state"] == "finished" and info["errors"].keys() == {"quantile"}
+    assert not (out / "quantile").exists()
+    assert not any(out.glob("by_date/*/quantile"))
+    assert (out / "ic" / "timeseries.csv").exists() and (out / "notes.txt").read_text() == "keep"
+    assert not any(s.startswith("quantile.") for s in pd.ExcelFile(out / "report.xlsx").sheet_names)
+
+
+def test_rerun_replaces_only_the_formats_it_writes(dataset, tmp_path):
+    """成功した metric は今回書く形式だけを置き換え、ほかの形式のファイルは残す。"""
+    report = evaluate(dataset.write_config())
+    out = report.save(tmp_path / "out", ["csv", "parquet"], by_date="all")
+    stale = out / "ic" / "old_table.csv"  # 以前の版の metric が書いていた表
+    stale.write_text("old")
+    report.save(out, ["csv"], by_date="all")
+    assert not stale.exists()
+    assert (out / "ic" / "timeseries.csv").exists() and (out / "ic" / "timeseries.parquet").exists()
+
+
+def test_rerun_through_evaluate_replaces_stale_tables(dataset, monkeypatch):
+    """evaluate(save=...) で再実行すると、metric を書く時点でその metric の以前の表を消す。"""
+    config = dataset.write_config(output=OUTPUT)
+    out = dataset.root / "out"
+    evaluate(config, save=True)
+    stale = out / "ic" / "old_table.csv"
+    stale.write_text("old")
+    date = sorted(p.name for p in (out / "by_date").iterdir())[0]
+    stale_by_date = out / "by_date" / date / "ic" / "old.csv"
+    stale_by_date.write_text("old")
+    seen = {}
+    add = IncrementalWriter.add
+
+    def spy(self, run):
+        add(self, run)
+        if run.key == "ic":  # finish() より前（ic を書き終えた直後）の状態
+            seen["stale"] = stale.exists() or stale_by_date.exists()
+
+    monkeypatch.setattr(IncrementalWriter, "add", spy)
+    evaluate(config, save=True)
+    assert seen == {"stale": False}
+    assert (out / "ic" / "timeseries.csv").exists()
+
+
+def test_cleanup_does_not_follow_symlinks(dataset, tmp_path):
+    """metric のディレクトリがシンボリックリンクなら、リンク先のファイルを消さない。"""
+    report = evaluate(dataset.write_config())
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "precious.csv").write_text("keep")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "ic").symlink_to(elsewhere, target_is_directory=True)
+    try:
+        report.save(out, ["csv"])
+    except OSError:
+        pass  # リンク先に書けるかどうかは環境しだい。消さないことだけを確かめる
+    assert (elsewhere / "precious.csv").read_text() == "keep"

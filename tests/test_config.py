@@ -213,3 +213,28 @@ def test_valid_range_is_checked():
         EvaluationConfig.model_validate(source(valid_range=[-2, 1]))
     with pytest.raises(ValidationError, match="below the upper bound"):
         EvaluationConfig.model_validate(source(valid_range=[1, 1]))
+
+
+@pytest.mark.parametrize("bad", ["../escaped", "ic/spearman", "a b", ".hidden", "-x", "x" * 65, ""])
+def test_metric_id_must_be_a_safe_directory_name(bad):
+    """id は出力のディレクトリ名になるので、出力先の外や入れ子を指す値はエラーにする。"""
+    with pytest.raises(ValidationError, match=r"metrics\.0\.id"):
+        EvaluationConfig.model_validate(_with(metrics=[{"name": "ic", "id": bad}]))
+
+
+@pytest.mark.parametrize("good", ["q10", "quantile_q10_specific", "IC-2", "x" * 64])
+def test_metric_id_accepts_letters_digits_underscore_and_hyphen(good):
+    cfg = EvaluationConfig.model_validate(_with(metrics=[{"name": "ic", "id": good}]))
+    assert cfg.metrics[0].key == good
+
+
+def test_metric_keys_differing_only_in_case_are_rejected():
+    """大文字・小文字を区別しないファイルシステムでは ic と IC が同じディレクトリになる。"""
+    with pytest.raises(ValidationError, match=r"\['IC', 'ic'\] differ only in upper/lower case"):
+        EvaluationConfig.model_validate(_with(metrics=[{"name": "ic"}, {"name": "ic", "id": "IC"}]))
+
+
+@pytest.mark.parametrize("key", ["by_date", "By_Date"])
+def test_by_date_is_reserved_as_a_metric_key(key):
+    with pytest.raises(ValidationError, match="reserved for output directories"):
+        EvaluationConfig.model_validate(_with(metrics=[{"name": "ic", "id": key}]))

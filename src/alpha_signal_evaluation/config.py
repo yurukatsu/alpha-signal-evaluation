@@ -89,6 +89,14 @@ def _to_list(value: Any) -> Any:
 
 PathLike = Annotated[str, AfterValidator(_resolve_path)]
 DateKey = Annotated[str, BeforeValidator(_to_str), Field(pattern=r"^\d{6}(\d{2})?$")]
+# metric のキー（id と、登録する metric の name）。出力のディレクトリ名・xlsx のシート名・
+# summary のキーに使うので、パスの区切りや ".." にならないよう、英数字で始まる英数字・"_"・"-"
+# だけにする。metrics.registry も同じ規則で name を検証する
+METRIC_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]*$"
+METRIC_KEY_MAX_LENGTH = 64
+# 日付ごとの断面の出力ディレクトリ名。metric のキーには使えない（大文字・小文字を区別しない）
+RESERVED_METRIC_KEYS = frozenset({"by_date"})
+MetricId = Annotated[str, Field(pattern=METRIC_KEY_PATTERN, max_length=METRIC_KEY_MAX_LENGTH)]
 # 日付ごとの断面を出す対象。"all"（結果に現れる全日付）または日付キーのリスト
 ByDate: TypeAlias = Literal["all"] | list[DateKey]
 
@@ -723,7 +731,9 @@ class MetricEntry(_Base):
     Attributes:
         name: レジストリに登録された metric 名（YAML ``name``、必須）。
         id: 結果のキー（YAML ``id``、既定 ``None`` = ``name``）。同じ metric を複数回
-            使う場合は一意な id が必要。
+            使う場合は一意な id が必要。出力のディレクトリ名になるので、英数字で始まる
+            英数字・``_``・``-`` だけ（64文字まで）。``/`` や ``..`` を含む id はエラーにする
+            （出力先の外や別の metric のディレクトリに書かれるのを防ぐ）。
         enabled: ``False`` なら実行しない（YAML ``enabled``、既定 ``True``）。
         params: metric ごとのパラメータ（YAML ``params``、既定 ``{}`` = すべて既定値）。
 
@@ -733,7 +743,7 @@ class MetricEntry(_Base):
     """
 
     name: str
-    id: str | None = None
+    id: MetricId | None = None
     enabled: bool = True
     params: dict[str, Any] = Field(default_factory=dict)
 
@@ -890,6 +900,8 @@ class EvaluationConfig(_Base):
 
         - metric のキー（``id`` または ``name``）が重複していないこと
           （無効化された metric も含めて検査する）
+        - metric のキーが、大文字・小文字の違いだけで重なっていないこと、``by_date``
+          （日付ごとの断面のディレクトリ名）でないこと
         - リターン系列名が全リターンソースで重複していないこと
         - ``risk_models.*.specific_return`` が定義済みのリターン系列名を指していること
 
@@ -900,6 +912,20 @@ class EvaluationConfig(_Base):
         if dup:
             raise ValueError(
                 f"Duplicate metric keys: {dup}. Set a unique `id` when using the same metric twice"
+            )
+        # キーは出力のディレクトリ名になる。大文字・小文字を区別しないファイルシステム
+        # （macOS・Windows の既定）では ic と IC が同じディレクトリになるので、重複とみなす
+        folded = [m.key.casefold() for m in self.metrics]
+        clash = sorted({m.key for m in self.metrics if folded.count(m.key.casefold()) > 1})
+        if clash:
+            raise ValueError(
+                f"Metric keys {clash} differ only in upper/lower case; they are used as "
+                "directory names, so make them differ in more than case"
+            )
+        reserved = sorted({m.key for m in self.metrics if m.key.casefold() in RESERVED_METRIC_KEYS})
+        if reserved:
+            raise ValueError(
+                f"Metric keys {reserved} are reserved for output directories; use another `id`"
             )
 
         names = [n for r in self.returns for n in r.series]
