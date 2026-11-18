@@ -218,7 +218,6 @@ def barra_env(monkeypatch):
         "RDS_APP_002_PASSWORD",
     ]:
         monkeypatch.setenv(name, "x")
-    monkeypatch.delenv("USER_FRIENDLY_NAME", raising=False)
 
 
 def returns_source(**kw):

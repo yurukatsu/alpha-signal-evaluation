@@ -241,3 +241,12 @@ def test_dbclient_execute_delegates_to_pandas_read_sql(monkeypatch):
 
     assert result == "result"
     assert calls == [("SELECT 1", client._connection, None)]
+
+
+def test_rds_app_002_reads_only_its_own_variables(monkeypatch):
+    """ユーザー名とパスワードは RDS_APP_002_* から読み、無関係な変数は見ない。"""
+    monkeypatch.setenv("USER_FRIENDLY_NAME", "wrong")
+    monkeypatch.setenv("RDS_APP_002_USERNAME", "user")
+    monkeypatch.setenv("RDS_APP_002_PASSWORD", "secret")
+    config = FsTrfacGlbConfig()
+    assert (config.username, config.password) == ("user", "secret")

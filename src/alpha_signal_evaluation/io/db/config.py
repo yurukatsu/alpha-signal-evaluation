@@ -328,20 +328,17 @@ class RdsApp002Config(ConnectionConfig):
 
     DB 名を持たないので、このクラスは直接は使わない（``connections`` の対応表にも載らない）。
     ポート 5432、文字コード utf8（PostgreSQL クライアントは charset を使わない）。
-    ホストは環境変数 ``RDS_APP_002_HOST`` から読む。ユーザー名・パスワードはどちらも
-    まず ``USER_FRIENDLY_NAME`` を見て、なければそれぞれ ``RDS_APP_002_USERNAME`` /
-    ``RDS_APP_002_PASSWORD`` を読む（namdb の定義のまま）。
+    ホスト・ユーザー名・パスワードは環境変数 ``RDS_APP_002_HOST`` / ``RDS_APP_002_USERNAME`` /
+    ``RDS_APP_002_PASSWORD`` から読む。取り込み元の namdb はユーザー名とパスワードの両方で
+    ``USER_FRIENDLY_NAME`` を先に読んでいたが、同じ値をユーザー名とパスワードに使う
+    プレースホルダの消し忘れとみなして読まない。
     """
 
     server_type: ServerType = "postgres"
     host: str = field(default_factory=_env_factory("RDS_APP_002_HOST"))
     port: int = 5432
-    username: str = field(
-        default_factory=_env_factory(["USER_FRIENDLY_NAME", "RDS_APP_002_USERNAME"])
-    )
-    password: str = field(
-        default_factory=_env_factory(["USER_FRIENDLY_NAME", "RDS_APP_002_PASSWORD"]), repr=False
-    )
+    username: str = field(default_factory=_env_factory("RDS_APP_002_USERNAME"))
+    password: str = field(default_factory=_env_factory("RDS_APP_002_PASSWORD"), repr=False)
     charset: str = "utf8"
 
 
