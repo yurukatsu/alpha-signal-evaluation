@@ -140,8 +140,8 @@ def test_db_pipeline_aggregates_daily_returns(dataset, monkeypatch, db_env):
             "match_on": "Trading_day",
             "columns": {"date": "dt", "asset_id": "code"},
             "series": {
-                "total": {"column": "ret", "kind": "total"},
-                "specific": {"column": "sret", "kind": "specific"},
+                "total": {"column": "ret", "aggregation": "cumprod"},
+                "specific": {"column": "sret", "aggregation": "cumsum"},
             },
         }
     ]
@@ -206,7 +206,7 @@ def test_db_connection_settings_are_checked(dataset, monkeypatch):
             "query": "q.sql",
             "match_on": "Trading_day",
             "columns": {"date": "dt", "asset_id": "code"},
-            "series": {"total": {"column": "ret", "kind": "total"}},
+            "series": {"total": {"column": "ret", "aggregation": "cumprod"}},
         }
     ]
     result = validate(dataset.write_config(returns=returns))
@@ -416,7 +416,7 @@ def test_make_bundle_drops_returns_out_of_range(caplog):
         bundle = make_bundle(
             signals,
             {"total": period},
-            return_kinds={"total": "total"},
+            return_aggregations={"total": "cumprod"},
             horizons=[1],
             dates=dates[:2],
             valid_range=(-1, 0.5),
@@ -430,7 +430,7 @@ def test_make_bundle_drops_returns_out_of_range(caplog):
         make_bundle(
             signals,
             {"total": period},
-            return_kinds={"total": "total"},
+            return_aggregations={"total": "cumprod"},
             horizons=[1],
             valid_range=(-2, 1),
         )
@@ -570,3 +570,42 @@ def test_by_date_is_validated_against_the_bundle_dates(bundle):
 
     cfg["output"]["by_date"] = [bundle.dates[3]]
     assert evaluate(cfg, data=bundle).ok
+
+
+def test_series_aggregation_decides_forward_and_cumulative_returns(bundle):
+    """系列名によらず、aggregation の cumprod / cumsum でフォワードと累積の計算が決まる。"""
+    dates = list(bundle.dates)
+    assets = ["A", "B", "C", "D"]
+    index = pd.Index([*dates, "99999999"], name="date")
+    period = pd.DataFrame(0.1, index=index, columns=assets)
+    signals = pd.DataFrame(
+        {"s": range(len(dates) * len(assets))},
+        index=pd.MultiIndex.from_product([dates, assets], names=["date", "asset_id"]),
+    ).astype(float)
+    data = make_bundle(
+        signals,
+        {"excess": period, "usd_total": period},
+        return_aggregations={"excess": "cumsum", "usd_total": "cumprod"},
+        horizons=[1, 2],
+        dates=dates,
+    )
+    assert data.forward_returns["excess"][2].iloc[0, 0] == pytest.approx(0.2)
+    assert data.forward_returns["usd_total"][2].iloc[0, 0] == pytest.approx(1.1**2 - 1)
+
+    cfg = {"version": 1, "metrics": [{"name": "quantile", "params": {"n_quantiles": 2}}]}
+    cum = evaluate(cfg, data=data)["quantile"].tables["cumulative"]
+    third = cum[(cum["portfolio"] == "Q1") & (cum["date"] == dates[2])].set_index("returns")
+    assert third.loc["excess", "cumulative_return"] == pytest.approx(0.3)
+    assert third.loc["usd_total", "cumulative_return"] == pytest.approx(1.1**3 - 1)
+
+    # metric の params で系列名を指定して累積方法だけを変えられる
+    params = {"n_quantiles": 2, "aggregation": {"cumulative": {"excess": "cumprod"}}}
+    cfg["metrics"][0]["params"] = params
+    cum = evaluate(cfg, data=data)["quantile"].tables["cumulative"]
+    third = cum[(cum["portfolio"] == "Q1") & (cum["date"] == dates[2])].set_index("returns")
+    assert third.loc["excess", "cumulative_return"] == pytest.approx(1.1**3 - 1)
+
+    # 定義されていない系列名は計算前にエラー
+    params["aggregation"]["cumulative"] = {"specific": "cumprod"}
+    with pytest.raises(ConfigValidationError, match="aggregation.cumulative: unknown return"):
+        evaluate(cfg, data=data)

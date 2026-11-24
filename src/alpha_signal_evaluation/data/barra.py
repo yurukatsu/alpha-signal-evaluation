@@ -622,7 +622,7 @@ def load_returns_daily(
 ) -> pd.DataFrame:
     """``start < date <= end`` の日次リターンを、``asset_id`` の long 形式で読む。
 
-    ``source.series`` の kind が ``total`` なら DRTN、``specific`` なら SRTN を読み、% を小数に
+    ``source.series`` の種類が ``total`` なら DRTN、``specific`` なら SRTN を読み、% を小数に
     する。``currency: USD`` ならトータルリターンを USD 建てにする。BID は ``source.asset_id``
     に従って ``asset_id`` にする（``AssetIds``）。対応表は、その日を含む期間の境界日
     （``boundaries`` のうちその日以後で最初のもの、なければ最後のもの）のものを使い、
@@ -638,31 +638,31 @@ def load_returns_daily(
         assets: シグナルのある銘柄の ``asset_id``（BID のまま使う銘柄を選ぶのに使う）。
 
     Returns:
-        columns=[date, asset_id, <kind>...] の DataFrame。kind の列（``total`` /
+        columns=[date, asset_id, <種類>...] の DataFrame。種類の列（``total`` /
         ``specific``）は ``source.series`` にあるものだけで、値は小数。date は8桁の文字列。
     """
     model = source.model
     boundaries = np.array(sorted(set(boundaries)), dtype=str)
     ids = load_asset_ids(source.asset_id, boundaries, assets, ctx, warnings)
     bids = ids.bids
-    kinds = sorted({s.kind for s in source.series.values()})
+    fields = sorted({s.column for s in source.series.values()})
     tables = {"total": ("D_PRC", "DRTN"), "specific": ("D_SRTN", "SRTN")}
 
     daily = None
-    for kind in kinds:
-        table, column = tables[kind]
+    for field in fields:
+        table, column = tables[field]
         df = _daily_values(model, table, column, start, end, bids, ctx)
         df[VALUE] = df[VALUE] * PERCENT
-        if kind == "total" and source.currency == "USD":
+        if field == "total" and source.currency == "USD":
             df = _to_usd(model, df, start, end, bids, ctx, warnings)
-        df = df.rename(columns={VALUE: kind})
+        df = df.rename(columns={VALUE: field})
         daily = df if daily is None else daily.merge(df, on=[DATE, _BID], how="outer")
 
     # その日を含む期間の境界日の対応表で asset_id にする
     pos = np.searchsorted(boundaries, daily[DATE].to_numpy(dtype=str), side="left")
     daily[_TARGET] = boundaries[np.minimum(pos, len(boundaries) - 1)]
     daily = ids.apply(daily)
-    return daily[[DATE, ASSET_ID, *kinds]].reset_index(drop=True)
+    return daily[[DATE, ASSET_ID, *fields]].reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------

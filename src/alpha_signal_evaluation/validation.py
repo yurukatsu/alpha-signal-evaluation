@@ -144,7 +144,7 @@ def spec_from_config(cfg: EvaluationConfig) -> DataSpec:
     return DataSpec(
         provides=frozenset(provides),
         signals=tuple(cfg.data.signal_names) if cfg.data else (),
-        return_kinds=cfg.return_kinds,
+        return_aggregations=cfg.return_aggregations,
         horizons=tuple(cfg.horizons),
         risk_models={name: frozenset(m.components) for name, m in cfg.risk_models.items()},
     )

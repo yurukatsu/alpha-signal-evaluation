@@ -7,7 +7,12 @@ from scipy import stats
 
 from alpha_signal_evaluation.data.bundle import DataSpec
 from alpha_signal_evaluation.metrics import get_metric
-from alpha_signal_evaluation.metrics._common import assign_quantiles, newey_west_tstat
+from alpha_signal_evaluation.metrics._common import (
+    assign_quantiles,
+    newey_west_tstat,
+    per_period_rate,
+)
+from alpha_signal_evaluation.metrics.base import ReturnAggregation
 
 
 def _summary(result, **where):
@@ -82,7 +87,7 @@ class TestQuantile:
         params = {
             "signals": ["alpha"],
             "returns": ["specific"],
-            "aggregation": {"cumulative": {"specific": "compound"}},
+            "aggregation": {"cumulative": {"specific": "cumprod"}},
         }
         result = get_metric("quantile")(params).compute(bundle)
         returns = result.tables["returns"]
@@ -216,7 +221,7 @@ def test_check_reports_unknown_references():
     spec = DataSpec(
         provides=frozenset({"signals", "forward_returns"}),
         signals=("value",),
-        return_kinds={"total": "total"},
+        return_aggregations={"total": "cumprod"},
         horizons=(1, 3),
     )
     ic = get_metric("ic")
@@ -241,3 +246,16 @@ def test_newey_west_equals_classic_t_without_lags():
     x = pd.Series(np.random.default_rng(0).standard_normal(200) + 0.2)
     classic = x.mean() / (x.std(ddof=0) / np.sqrt(len(x)))
     assert newey_west_tstat(x, 0) == pytest.approx(classic)
+
+
+@pytest.mark.parametrize("method", ["total", "specific", "compound", "sum"])
+def test_unknown_aggregation_is_never_treated_as_cumsum(bundle, method):
+    """旧 kind などの値を黙って加算にせず、エラーにする。"""
+    wide = pd.DataFrame({"Q1": [0.1, 0.1]})
+    with pytest.raises(ValueError, match="Unknown aggregation"):
+        ReturnAggregation.cumulate(wide, method)
+    with pytest.raises(ValueError, match="Unknown aggregation"):
+        per_period_rate(0.21, 2, method)
+    kinds = {name: method for name in bundle.return_aggregations}
+    with pytest.raises(ValueError, match="must be 'cumprod' or 'cumsum'"):
+        replace(bundle, return_aggregations=kinds)

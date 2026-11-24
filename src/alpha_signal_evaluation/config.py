@@ -36,15 +36,15 @@ from pydantic import (
     model_validator,
 )
 
-ReturnKind: TypeAlias = Literal["total", "specific"]
 Convention: TypeAlias = Literal["realized", "forward"]
 OutputFormat: TypeAlias = Literal["parquet", "xlsx", "csv"]
-# 複数期間のリターンの束ね方。compound は複利、sum は加算
-Aggregation: TypeAlias = Literal["compound", "sum"]
+# 複数期間のリターンの束ね方（名前は pandas に合わせる）。
+# cumprod は複利（(1 + r).cumprod() - 1）、cumsum は加算（r.cumsum()）
+Aggregation: TypeAlias = Literal["cumprod", "cumsum"]
 
-# kind ごとの束ね方（total は複利、specific は加算）。期間への集約・フォワードリターン
-# （preprocess）、1期間あたりへの換算と累積リターンの既定値（metrics）で共通に使う
-AGGREGATION_BY_KIND: dict[ReturnKind, Aggregation] = {"total": "compound", "specific": "sum"}
+# Barra のリターンの種類ごとの束ね方（DRTN は複利、SRTN は加算）。ほかのソースは系列ごとに
+# config の ``aggregation`` で指定する
+BARRA_AGGREGATION: dict[str, Aggregation] = {"total": "cumprod", "specific": "cumsum"}
 
 
 def _resolve_path(value: str, info: ValidationInfo) -> str:
@@ -338,12 +338,29 @@ class ReturnSeries(_Base):
 
     Attributes:
         column: ソース内の実カラム名（YAML ``column``、必須）。
-        kind: リターンの種類 ``total`` / ``specific``（YAML ``kind``、必須）。
-            期間内の集約方法は kind から固定で決まる（total は複利、specific は加算）。
+        aggregation: 複数期間を束ねる方法（YAML ``aggregation``、必須）。``cumprod`` は複利、
+            ``cumsum`` は加算。日次から期間への集約、フォワードリターン、1期間あたりへの換算、
+            累積リターンの既定値に使う。系列の名前や種類（トータル、スペシフィック、
+            超過リターンなど）には依存しない。
     """
 
     column: str
-    kind: ReturnKind
+    aggregation: Aggregation
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_kind(cls, data: Any) -> Any:
+        """廃止した ``kind`` が書かれていたら、書き換え方を示してエラーにする。
+
+        Raises:
+            ValueError: ``kind`` のキーがある場合。
+        """
+        if isinstance(data, dict) and "kind" in data:
+            raise ValueError(
+                "`kind` was replaced by `aggregation`: write `aggregation: cumprod` "
+                "(was kind: total) or `aggregation: cumsum` (was kind: specific)"
+            )
+        return data
 
 
 def check_valid_range(value: tuple[float, float]) -> tuple[float, float]:
@@ -392,7 +409,7 @@ class ReturnsDBSource(DBSource):
     """DB から読むリターンソース（``returns`` の要素、``source: db``）。
 
     期間全体の日次リターンを1クエリで取得し、``match_on`` の列を境界として
-    カレンダー期間に集約する（total は複利、specific は加算）。
+    カレンダー期間に集約する（束ね方は系列ごとの ``aggregation``）。
 
     Attributes:
         convention: 期間リターンの時点の規約（YAML ``convention``、既定 ``"realized"``）。
@@ -431,20 +448,35 @@ def _default_barra_asset_id(data: Any) -> Any:
 
 
 def _barra_series(value: Any) -> Any:
-    """Barra の ``series`` の ``{系列名: kind}`` を ``{系列名: ReturnSeries}`` の形に展開する。
+    """Barra の ``series`` の ``{系列名: 種類}`` を ``{系列名: ReturnSeries}`` の形に展開する。
 
-    値が文字列（``total`` / ``specific``）なら ``{"column": v, "kind": v}`` にする
-    （Barra ソースの読み込み結果は kind と同じ名前の列を持つ）。それ以外はそのまま返し、
-    pydantic の型検証に任せる。
+    種類（``total`` = DRTN / ``specific`` = SRTN）が読むデータと束ね方を決めるので、Barra では
+    列名と ``aggregation`` は選べない。展開済みの形（``model_dump`` の結果）はそのまま受け取る。
+
+    Raises:
+        ValueError: 値が ``total`` / ``specific`` でも展開済みの形でもない場合。
     """
-    if isinstance(value, dict):
-        return {k: {"column": v, "kind": v} if isinstance(v, str) else v for k, v in value.items()}
-    return value
+    if not isinstance(value, dict):
+        return value
+    out = {}
+    for name, item in value.items():
+        if isinstance(item, ReturnSeries):
+            item = item.model_dump()
+        field = item.get("column") if isinstance(item, dict) else item
+        known = isinstance(field, str) and field in BARRA_AGGREGATION
+        expanded = {"column": field, "aggregation": BARRA_AGGREGATION[field]} if known else None
+        if not known or (isinstance(item, dict) and item != expanded):
+            raise ValueError(
+                f"series {name!r}: write the Barra return type only (`total` or `specific`); "
+                "Barra sources have no column or aggregation to choose"
+            )
+        out[name] = expanded
+    return out
 
 
 def _default_barra_series() -> dict[str, ReturnSeries]:
     """Barra の ``series`` の既定値（``total`` と ``specific`` の両方）。"""
-    return {k: ReturnSeries(column=k, kind=k) for k in ("total", "specific")}
+    return {k: ReturnSeries(column=k, aggregation=a) for k, a in BARRA_AGGREGATION.items()}
 
 
 class BarraReturnsSource(_Base):
@@ -464,9 +496,9 @@ class BarraReturnsSource(_Base):
         currency: トータルリターンの通貨（YAML ``currency``、既定 ``"local"``）。
             ``local`` は取引通貨建て（DB の値のまま）、``USD`` は日次で為替を掛けて
             USD 建てにする。スペシフィックリターンは通貨によらずそのまま。
-        series: ``{系列名: kind}``（YAML ``series``、既定 ``{total: total, specific: specific}``）。
-            kind は ``total``（DRTN）または ``specific``（SRTN）。系列名は全リターンソースで
-            一意である必要がある。
+        series: ``{系列名: 種類}``（YAML ``series``、既定 ``{total: total, specific: specific}``）。
+            種類は ``total``（DRTN、``cumprod`` で束ねる）または ``specific``（SRTN、``cumsum`` で
+            束ねる）。系列名は全リターンソースで一意である必要がある。
         asset_id: 銘柄 ID（BID）の扱い（YAML ``asset_id``、既定はモデルで決まり ``JPE4`` は
             ``nri_code``、``GEMLT`` / ``GEM3`` は ``bid``）。``nri_code`` は barraid_jp で
             nri_code にし（対応のない銘柄は捨てる）、``bid`` は日本株も含めて BID のまま使う
@@ -492,21 +524,6 @@ class BarraReturnsSource(_Base):
     def _fill_asset_id(cls, data: Any) -> Any:
         """``asset_id`` が未指定なら、モデルから既定値を決める（``_default_barra_asset_id``）。"""
         return _default_barra_asset_id(data)
-
-    @model_validator(mode="after")
-    def _column_is_kind(self) -> "BarraReturnsSource":
-        """各系列の ``column`` が ``kind`` と同じであることを確認する（列名は選べない）。
-
-        Raises:
-            ValueError: ``{column: ..., kind: ...}`` の形で異なる列名を指定した場合。
-        """
-        bad = sorted(name for name, s in self.series.items() if s.column != s.kind)
-        if bad:
-            raise ValueError(
-                f"series {bad}: write the kind only (e.g. `total: total`); "
-                "Barra sources have no column names to choose"
-            )
-        return self
 
 
 ReturnsSource = Annotated[
@@ -942,9 +959,9 @@ class EvaluationConfig(_Base):
         return self
 
     @property
-    def return_kinds(self) -> dict[str, ReturnKind]:
-        """リターン系列名 -> kind（``total`` / ``specific``）。全リターンソースを通した対応。"""
-        return {name: s.kind for r in self.returns for name, s in r.series.items()}
+    def return_aggregations(self) -> dict[str, Aggregation]:
+        """リターン系列名 -> 束ね方（``cumprod`` / ``cumsum``）。全リターンソースを通した対応。"""
+        return {name: s.aggregation for r in self.returns for name, s in r.series.items()}
 
     @property
     def enabled_metrics(self) -> list[MetricEntry]:

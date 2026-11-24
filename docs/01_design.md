@@ -19,8 +19,8 @@
 | 期間リターン | カレンダー1行分（1評価期間）のリターン。 |
 | フォワードリターン | ある行の時点から、ホライズン分だけ先の行の時点までのリターン。期間リターンをホライズンの行数だけ束ねて作ります。 |
 | 時点合わせ | ある行のシグナルに、どの期間のリターンを対応させるかを決める処理。 |
-| リターン系列 | config の `returns` で名前を付けたリターン。metric はこの名前でリターンを指定します。 |
-| kind | リターン系列の種類。`total`（トータルリターン）と `specific`（スペシフィックリターン）の2つです。 |
+| リターン系列 | config の `returns` で名前を付けたリターン。metric はこの名前でリターンを指定します。名前は自由に付けられ（`total`、`specific`、`excess`、`usd_total` など）、名前によって計算が変わることはありません。 |
+| aggregation | リターン系列ごとに指定する、複数の期間のリターンを束ねる方法。`cumprod`（複利）か `cumsum`（加算）です。`source: barra` では選べず、読むデータ（DRTN / SRTN）で決まります。 |
 | role | 列の役割を表す共通の名前（`date` / `asset_id` / `category` / `factor` / `value` / `weight`）。入力元（ソース）ごとに違う実際の列名を、config の `columns` で role に対応づけます。 |
 | DataBundle | 時点合わせを済ませたデータ一式（シグナル、フォワードリターン、分類など）。metric が受け取る唯一の入力です。 |
 | データ準備 | config に従ってデータを読み込み、時点合わせをして DataBundle を組み立てる処理。コードでは `pipeline/preprocess.py` が担当します。 |
@@ -84,9 +84,9 @@
 - 読み込んだデータは、config の指定に従ってカレンダーの行に対応づけられ、その行の日付キーが付きます。この対応づけは行をずらしません（[02 の 4.2](02_features.md#42-どのデータがどの行に対応するか)）。
 - リターンのソースには、行 t の値がどの期間のリターンかを表す規約（`convention`）があります。`realized`（既定）は「行 t-1 → t の実現リターン」、`forward` は「行 t → t+1 のリターン」です。どちらの規約でも、でき上がるフォワードリターンの行 t は「行 t の時点から h 行先の時点まで」のリターンで、行 t のシグナルと同じ行に置かれます。
 
-規約の詳細、DB の日次リターンを期間に集約する規則、kind ごとの束ね方（`total` は複利、`specific` は加算）は、[02 の 4 章](02_features.md#4-時点合わせの仕様) にあります。
+規約の詳細、DB の日次リターンを期間に集約する規則、リターン系列ごとの束ね方（`aggregation` の `cumprod` は複利、`cumsum` は加算）は、[02 の 4 章](02_features.md#4-時点合わせの仕様) にあります。
 
-`realized` 規約・kind が `total` のリターン系列で、ある銘柄の期間リターンが次のとおりだった場合に、データ準備が作るフォワードリターンです。
+`realized` 規約・`aggregation: cumprod` のリターン系列で、ある銘柄の期間リターンが次のとおりだった場合に、データ準備が作るフォワードリターンです。
 
 | 行（`Base_day`） | 期間リターン | フォワードリターン h=1 | フォワードリターン h=2 |
 |---|---|---|---|
@@ -273,8 +273,8 @@ metric は複数のプロセスで並列に実行できます。指定方法と�
 | 日付キーは文字列のまま | `yyyymmdd`（8桁）または `yyyymm`（6桁）の文字列で扱い、日付型に変換しない | カレンダーの値をそのままファイルパスに埋め込む（`{Label2}.csv` など）ため。日付と月のキーが混在しても同じ扱いにできる |
 | 銘柄コード（`asset_id`）も文字列 | 読み込み時に文字列にそろえる | ソースによって数値と文字列が混在しても結合できる。先頭のゼロ（`01346` など）を保つ |
 | 内部の列名は role 名 | 実際の列名は、読み込み直後に role 名に変換する。対応は config の `columns` に書く（[03 の 3 章](03_config.md#columns-role-と実カラム名の対応)） | ソースごとの列名の違いを、読み込みより後の処理に持ち込まない |
-| 期間の束ね方は kind で決まる | 複数の期間のリターンを束ねるとき、`total` は複利、`specific` は加算。利用者は選べない（[02 の 4.4](02_features.md#44-フォワードリターンの定義)） | 期間への集約、フォワードリターン、累積リターンの既定値が同じ定義を使うので、処理によって食い違わない |
-| 期間をまたぐ集計は `ReturnAggregation` | 平均は算術平均と幾何平均の両方を出す。累積リターンの方法（複利 / 加算）だけは、metric のパラメータで kind ごとに変えられる（[04 の 1.3](04_metrics.md#13-リターンの集計規約-aggregation)） | 算術平均は予測力の評価、幾何平均は運用したときの成長率の目安で、用途が違う |
+| 期間の束ね方は系列ごとの `aggregation` で決まる | 複数の期間のリターンを束ねる方法を、リターン系列ごとに `cumprod`（複利）か `cumsum`（加算）で指定する。系列の名前からは決まらない。`source: barra` だけは例外で、読むデータ（DRTN / SRTN）によって決まる（[02 の 4.4](02_features.md#44-フォワードリターンの定義)） | 期間への集約、フォワードリターン、1期間あたりへの換算、累積リターンの既定値が同じ指定を使うので、処理によって食い違わない |
+| 期間をまたぐ集計は `ReturnAggregation` | 平均は算術平均と幾何平均の両方を出す。累積リターンの方法（`cumprod` / `cumsum`）だけは、metric のパラメータでリターン系列ごとに変えられる（[04 の 1.3](04_metrics.md#13-リターンの集計規約-aggregation)） | 算術平均は予測力の評価、幾何平均は運用したときの成長率の目安で、用途が違う |
 | metric のパラメータは `MetricParams` | `MetricParams` を継承して定義し、全項目に既定値を持たせる | config で `params` を省略でき、原則 3 の検証が自動で効く |
 | ファクター共分散の形と単位 | ソースによらず、index=(date, factor)、columns=ファクター名の正方行列。値は年率で、単位は小数の2乗。Barra（`source: barra`）は読み込み時に換算し、それ以外のソースはこの単位で用意する | どのソースのリスクモデルでも、metric が同じ形と単位で受け取れる |
 | 相対パスは config ファイル基準 | config.yaml に書いた相対パスは、config ファイルの場所から解決する（例外は [03 の 1 章](03_config.md#相対パスの基準)） | どのディレクトリで実行しても同じファイルを指す |
@@ -298,7 +298,7 @@ metric を追加するだけなら、この節を読む必要はありません�
 | 原則 3（検証） | 構造は `config.py`（pydantic。全モデルが `extra="forbid"`）、意味は `validation.py` の `validate_config()`。metric の `params` は、各 metric の `Params` と `Metric.check()` | `tests/test_config.py`（`test_unknown_keys_are_rejected` など構造の検証）、`tests/test_end_to_end.py` の `test_validation_reports_all_problems_at_once`、`test_evaluate_raises_before_computing`、`tests/test_incremental_save.py` の `test_config_errors_write_nothing` |
 | 原則 4（認証情報） | `io/db/config.py`（接続先ごとの設定クラスが環境変数から読む） | `tests/test_end_to_end.py` の `test_db_connection_settings_are_checked` |
 | 失敗の扱い（5 章） | `pipeline/runner.py` の `run_metrics()`（隔離、並列実行）、`report/incremental.py` の `IncrementalWriter`（逐次書き出し）、`report/writers.py`（一時ファイル、`run_info.json`） | `tests/test_incremental_save.py`（失敗した metric があっても他の metric が実行されることは `test_runner_reports_each_finished_metric`、強制終了は実際に子プロセスを落とす `test_results_remain_when_the_process_is_killed`）、`tests/test_end_to_end.py` の `test_parallel_matches_serial`（並列と逐次で結果が一致すること） |
-| 規約（6 章） | 日付キーと銘柄コードの正規化は `data/keys.py`、role 名の定数は `data/columns.py`、kind ごとの束ね方は `config.AGGREGATION_BY_KIND` | `tests/test_input_formats.py`、`tests/test_monthly_calendar.py` |
+| 規約（6 章） | 日付キーと銘柄コードの正規化は `data/keys.py`、role 名の定数は `data/columns.py`、リターン系列の束ね方は `config.ReturnSeries` の `aggregation`（`source: barra` の対応は `config.BARRA_AGGREGATION`） | `tests/test_input_formats.py`、`tests/test_monthly_calendar.py`、`tests/test_end_to_end.py` の `test_series_aggregation_decides_forward_and_cumulative_returns` |
 
 4 章の手順 1〜5 の入口は、順に `load_config()`、`validate_config()`、`build_bundle()`、`run_metrics()`、`EvaluationReport`（逐次書き出しは `IncrementalWriter`）です。
 

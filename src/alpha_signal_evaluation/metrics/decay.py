@@ -7,7 +7,6 @@
 import pandas as pd
 from pydantic import Field
 
-from ..config import AGGREGATION_BY_KIND
 from ..data.bundle import DataBundle
 from ..data.columns import DATE
 from ._common import (
@@ -58,8 +57,8 @@ class AlphaDecay(Metric):
       spread = Q{n} − Q1 を日付ごとに求め、その平均と Newey-West t 値。
       ``mean_spread`` は h 期間リターンのままの値。
     - ``spread_per_period``: 上位・下位それぞれの h 期間平均リターン（日付平均）を
-      1期間あたりに換算してから差を取る。換算方法はリターンの kind で固定
-      （``total``: 幾何 ``(1 + r) ** (1 / h) - 1``、``specific``: 算術 ``r / h``）。
+      1期間あたりに換算してから差を取る。換算方法はリターン系列の ``aggregation``
+      （``cumprod``: 幾何 ``(1 + r) ** (1 / h) - 1``、``cumsum``: 算術 ``r / h``）。
       異なるホライズンの値を同じ尺度で比べるための指標。
 
     パラメータは :class:`AlphaDecayParams` を参照。
@@ -81,8 +80,8 @@ class AlphaDecay(Metric):
         """全ての (signal, returns, horizon) の組について IC とスプレッドを求める。
 
         Args:
-            data: pipeline が用意した時点合わせ済みのデータ。``data.return_kinds`` から
-                各リターン系列の kind を取り、1期間あたりへの換算方法を決める。
+            data: pipeline が用意した時点合わせ済みのデータ。``data.return_aggregations`` から
+                各リターン系列の束ね方を取り、1期間あたりへの換算方法を決める。
 
         Returns:
             ``decay`` の表、平均 IC と ``spread_per_period`` の summary、
@@ -94,7 +93,7 @@ class AlphaDecay(Metric):
         rows = []
         for signal in data.resolve_signals(p.signals):
             for ret in data.resolve_returns(p.returns):
-                method = AGGREGATION_BY_KIND[data.return_kinds[ret]]
+                method = data.return_aggregations[ret]
                 for h in data.resolve_horizons(p.horizons):
                     df = data.aligned(signal, ret, h)
                     ic = cross_sectional_corr(df, signal, "forward_return", p.method, p.min_obs)
@@ -130,6 +129,7 @@ class AlphaDecay(Metric):
             ),
             notes=[
                 "spread_per_period converts the average h-period top and bottom returns to a "
-                "per-period rate (total: geometric, specific: arithmetic) before differencing."
+                "per-period rate using each series' aggregation (cumprod: geometric, "
+                "cumsum: arithmetic) before differencing."
             ],
         )

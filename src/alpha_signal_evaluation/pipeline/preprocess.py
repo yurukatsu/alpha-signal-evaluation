@@ -17,9 +17,9 @@ metrics 側では一切時点をずらさない。loaders（``data/loaders.py``�
     規約（convention）: 期間リターンの行 t がどの期間のリターンを持つか。
         ``realized`` は「行 t-1 → 行 t」の実現リターン（デフォルト）、
         ``forward`` は「行 t → 行 t+1」のリターン。
-    集約方法: 複数の日次・期間のリターンを束ねる方法。``total`` は複利
-        （compound）、``specific`` は加算（sum）で、``config.AGGREGATION_BY_KIND`` により
-        kind から固定で決まる（ユーザーには選ばせない）。ファクターリターンは常に加算。
+    集約方法: 複数の日次・期間のリターンを束ねる方法。``cumprod`` は複利、``cumsum`` は加算で、
+        リターン系列ごとに config の ``aggregation`` で指定する（Barra は DRTN が ``cumprod``、
+        SRTN が ``cumsum`` に固定）。ファクターリターンは常に加算。
 
 処理の流れ（``build_bundle``）:
     1. カレンダーを読み、``make_plan`` で評価行と延長行を決める。
@@ -47,7 +47,6 @@ import numpy as np
 import pandas as pd
 
 from ..config import (
-    AGGREGATION_BY_KIND,
     DEFAULT_VALID_RANGE,
     Aggregation,
     BarraReturnsSource,
@@ -58,7 +57,6 @@ from ..config import (
     DBSource,
     EvaluationConfig,
     FileSource,
-    ReturnKind,
     ReturnsDBSource,
     RiskModelConfig,
     check_valid_range,
@@ -255,7 +253,7 @@ def to_period_returns(
     - realized: 行 i の期間は ``(boundaries[i-1], boundaries[i]]``。最初の行は起点がないため欠損
     - forward:  行 i の期間は ``[boundaries[i], boundaries[i+1])``。最後の行は終点がないため欠損
 
-    ``method`` は ``compound``（複利）または ``sum``（加算）。期間内が全て欠損なら欠損のまま
+    ``method`` は ``cumprod``（複利）または ``cumsum``（加算）。期間内が全て欠損なら欠損のまま
     （0% にしない）。
 
     日付の比較は 8 桁文字列の辞書順で行う（``boundaries`` は昇順であること）。
@@ -267,7 +265,7 @@ def to_period_returns(
     欠損の扱い:
         - 期間内の一部の日だけが欠損: その日を除いて集約する（実質 0% として扱う）。
         - 期間内の日が全て欠損、または期間内に日次データが1日もない: NaN。
-        - compound は ``log1p`` の和を ``expm1`` で戻すため、-1 未満の日次値は NaN、
+        - cumprod は ``log1p`` の和を ``expm1`` で戻すため、-1 未満の日次値は NaN、
           -1 ちょうどはその期間を -1 にする。
 
     Args:
@@ -276,14 +274,14 @@ def to_period_returns(
         boundaries: index=カレンダー行のキー（calendar.index の値）、
             values=期間の境界日（8 桁）。延長行の連続した行であること。
         convention: ``realized`` または ``forward``。
-        method: ``compound`` または ``sum``。
+        method: ``cumprod`` または ``cumsum``。
 
     Returns:
         期間リターン。index=``boundaries.index``（名前 ``date``、全行を含む）、
         columns=``daily`` の列。行 i が上記の期間 i の集約値。
 
     Raises:
-        ValueError: ``method`` が ``compound`` / ``sum`` 以外の場合。
+        ValueError: ``method`` が ``cumprod`` / ``cumsum`` 以外の場合。
 
     Examples:
         境界 ``[0131, 0228, 0331]``（行キー ``[20200131, 20200229, 20200331]``）、
@@ -306,9 +304,9 @@ def to_period_returns(
         valid = (pos >= 0) & (pos < len(edges) - 1)
     x = daily[valid]
     keys = boundaries.index.to_numpy()[pos[valid]]
-    if method == "compound":
+    if method == "cumprod":
         out = np.expm1(np.log1p(x).groupby(keys).sum(min_count=1))
-    elif method == "sum":
+    elif method == "cumsum":
         out = x.groupby(keys).sum(min_count=1)
     else:
         raise ValueError(f"Unknown aggregation method: {method!r}")
@@ -337,34 +335,34 @@ def forward_returns(
     （index の連続性は検査しない）。束ねる行がフレームの末尾を超える行
     （realized は最後の h 行、forward は最後の h-1 行）は NaN になる。
 
-    束ね方は ``method`` による: ``compound`` は ``log1p`` の和を ``expm1`` で戻す複利、
-    ``sum`` は単純な和。0 埋めはしないので、束ねる h 行のうち1つでも欠損なら NaN。
+    束ね方は ``method`` による: ``cumprod`` は ``log1p`` の和を ``expm1`` で戻す複利、
+    ``cumsum`` は単純な和。0 埋めはしないので、束ねる h 行のうち1つでも欠損なら NaN。
 
     Args:
         period_ret: 期間リターン。index=date（カレンダー行のキー）、columns=asset_id
             （ファクターリターンなら factor）。
         horizons: ホライズン（行数、正の整数）。
         convention: ``period_ret`` の規約（``realized`` / ``forward``）。
-        method: ``compound`` または ``sum``。
+        method: ``cumprod`` または ``cumsum``。
 
     Returns:
         ホライズン -> フォワードリターン。各値は ``period_ret`` と同じ index・columns の
         wide 形式（reindex はしないので、評価行への絞り込みは呼び出し側で行う）。
 
     Raises:
-        ValueError: ``method`` が ``compound`` / ``sum`` 以外の場合。
+        ValueError: ``method`` が ``cumprod`` / ``cumsum`` 以外の場合。
 
     Examples:
-        期間リターン ``r0 .. r5``（行 0〜5）、``h=2``、``method="sum"`` の場合::
+        期間リターン ``r0 .. r5``（行 0〜5）、``h=2``、``method="cumsum"`` の場合::
 
             realized: fwd[0] = r1 + r2, fwd[3] = r4 + r5, fwd[4] = fwd[5] = NaN
             forward:  fwd[0] = r0 + r1, fwd[4] = r4 + r5, fwd[5] = NaN
 
         realized で r2 が欠損なら fwd[0]・fwd[1] は NaN（r1・r3 があっても 0 埋めしない）。
     """
-    if method == "compound":
+    if method == "cumprod":
         x = np.log1p(period_ret)
-    elif method == "sum":
+    elif method == "cumsum":
         x = period_ret
     else:
         raise ValueError(f"Unknown aggregation method: {method!r}")
@@ -373,7 +371,7 @@ def forward_returns(
     out = {}
     for h in horizons:
         summed = shifted.rolling(h, min_periods=h).sum().shift(-(h - 1))
-        out[h] = np.expm1(summed) if method == "compound" else summed
+        out[h] = np.expm1(summed) if method == "cumprod" else summed
     return out
 
 
@@ -510,7 +508,7 @@ def _forward_on_eval_rows(
         period: 期間リターン（index=延長行のキー、欠けのない連続した行）。
         plan: 評価計画（ホライズンと評価行を使う）。
         convention: ``period`` の規約。
-        method: 束ね方（``compound`` / ``sum``）。
+        method: 束ね方（``cumprod`` / ``cumsum``）。
 
     Returns:
         ホライズン -> フォワードリターン（index=評価行のキー、columns は ``period`` と同じ）。
@@ -533,7 +531,7 @@ def _load_period_frames(
 ) -> dict[str, pd.DataFrame]:
     """延長行の期間データを読み、values の各列を wide（行=延長行）に変換する。
 
-    DB ソースは日次で取得し、``values`` ごとの集約方法（compound / sum）で期間に集約する。
+    DB ソースは日次で取得し、``values`` ごとの集約方法（cumprod / cumsum）で期間に集約する。
 
     - DBSource: ``_db_range`` の範囲の日次データを1クエリで取得し、延長行の
       ``match_on`` 列の値を境界として ``to_period_returns`` で集約する。境界は
@@ -551,7 +549,7 @@ def _load_period_frames(
         plan: 評価計画（延長行を使う）。
         ctx: 読み込みコンテキスト。
         columns: wide の列にする role 名（銘柄なら ``asset_id``、ファクターなら ``factor``）。
-        values: 出力名 -> ``(値の role 名, 集約方法)``。集約方法は ``compound`` / ``sum``。
+        values: 出力名 -> ``(値の role 名, 集約方法)``。集約方法は ``cumprod`` / ``cumsum``。
         required_roles: ソースに必須の role 名。
         convention: DB の日次→期間集約で使う規約（``realized`` / ``forward``）。
         warnings: 警告文を追記するリスト（Barra ソースで使う）。
@@ -786,11 +784,11 @@ def _load_barra_risk_model(
         start, end = _db_range(plan, model.match_on)
         boundaries = _period_boundaries(plan, model.match_on)
         daily = barra.load_factor_returns_daily(model.model, start, end, factors, ctx, warnings)
-        values = {FACTOR: (VALUE, "sum")}
+        values = {FACTOR: (VALUE, "cumsum")}
         period = _aggregate_daily(daily, boundaries, FACTOR, values, model.convention, warnings)
         period = period[FACTOR]
         period = period[[f for f in factors.order if f in period.columns]]
-        forward_factor = _forward_on_eval_rows(period, plan, model.convention, "sum")
+        forward_factor = _forward_on_eval_rows(period, plan, model.convention, "cumsum")
     return RiskModelData(
         exposures=exposures,
         factor_covariance=factor_covariance,
@@ -895,11 +893,11 @@ def _load_custom_risk_model(
             plan,
             ctx,
             columns=FACTOR,
-            values={FACTOR: (VALUE, "sum")},
+            values={FACTOR: (VALUE, "cumsum")},
             required_roles=set(source_requirements("factor_returns", source)[0]),
             convention=source.convention,
         )[FACTOR]
-        forward_factor = _forward_on_eval_rows(period, plan, source.convention, "sum")
+        forward_factor = _forward_on_eval_rows(period, plan, source.convention, "cumsum")
     return RiskModelData(
         exposures=exposures,
         factor_covariance=factor_covariance,
@@ -990,8 +988,8 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
        - ベンチマーク（任意）: ``weight`` をベンチマークウェイトにする
          （ユニバースのウェイトより優先）。
        - 分類（任意）: 評価行。
-       - リターン: ソースごとに延長行の期間リターンを読み、系列ごとに kind に応じた
-         集約方法（``AGGREGATION_BY_KIND``）とソースの convention でフォワードリターンに
+       - リターン: ソースごとに延長行の期間リターンを読み、系列の
+         ``aggregation`` とソースの convention でフォワードリターンに
          して、評価行に reindex する。
        - リスクモデル: ``_load_risk_model``。
 
@@ -1051,10 +1049,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                 plan,
                 ctx,
                 columns=ASSET_ID,
-                values={
-                    name: (s.column, AGGREGATION_BY_KIND[s.kind])
-                    for name, s in source.series.items()
-                },
+                values={name: (s.column, s.aggregation) for name, s in source.series.items()},
                 required_roles=set(required),
                 convention=source.convention,
                 warnings=warnings,
@@ -1062,7 +1057,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
                 valid_range=source.valid_range,
             )
             for name, period in periods.items():
-                method = AGGREGATION_BY_KIND[source.series[name].kind]
+                method = source.series[name].aggregation
                 fwd[name] = _forward_on_eval_rows(period, plan, source.convention, method)
 
         risk_models = {
@@ -1076,7 +1071,7 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
     bundle = DataBundle(
         signals=signals,
         forward_returns=fwd,
-        return_kinds=cfg.return_kinds,
+        return_aggregations=cfg.return_aggregations,
         classification=classification,
         risk_models=risk_models,
         benchmark_weights=benchmark_weights,
@@ -1089,7 +1084,7 @@ def make_bundle(
     signals: pd.DataFrame,
     period_returns: Mapping[str, pd.DataFrame],
     *,
-    return_kinds: Mapping[str, ReturnKind],
+    return_aggregations: Mapping[str, Aggregation],
     horizons: list[int],
     convention: Convention = "realized",
     valid_range: tuple[float, float] = DEFAULT_VALID_RANGE,
@@ -1101,8 +1096,8 @@ def make_bundle(
 
     カレンダーファイルや config の data セクションを使わず、既に期間リターンに
     なっている DataFrame から ``forward_returns`` でフォワードリターンを計算する。
-    時点合わせの規則は ``build_bundle`` と同じで、集約方法は ``return_kinds`` から
-    ``AGGREGATION_BY_KIND`` で決まる（total は複利、specific は加算）。
+    時点合わせの規則は ``build_bundle`` と同じで、集約方法は ``return_aggregations`` の
+    系列ごとの指定（``cumprod`` は複利、``cumsum`` は加算）で決まる。
 
     ``period_returns`` は index でソートしてから行の位置でずらすため、行は欠けのない
     連続したカレンダー行でなければならない（連続性は検査しない）。評価行の後ろに
@@ -1120,7 +1115,7 @@ def make_bundle(
             2 レベルの MultiIndex であればレベル名は ``date`` / ``asset_id`` に付け替える。
         period_returns: 系列名 -> 期間リターン（index=date, columns=asset_id）。
             行は欠けのない連続したカレンダー行で、評価期間の後ろに最大ホライズン分の行を含むこと。
-        return_kinds: 系列名 -> ``total`` / ``specific``。
+        return_aggregations: 系列名 -> 束ね方（``cumprod`` / ``cumsum``）。
             ``period_returns`` の全系列について必要（余分な系列は無視する）。
         horizons: ホライズン（行数、正の整数）。
         convention: 期間リターンの規約（realized: 行 t は t-1→t の実現リターン）。
@@ -1135,12 +1130,12 @@ def make_bundle(
             指定してもシグナルは ``dates`` で絞らない。
 
     Returns:
-        DataBundle。``return_kinds`` は ``period_returns`` にある系列だけを持つ。
+        DataBundle。``return_aggregations`` は ``period_returns`` にある系列だけを持つ。
 
     Raises:
         ValueError: ``period_returns`` のいずれかに ``dates`` の日付がない場合、または
             ``valid_range`` の下限が -1 未満か上限以上の場合。
-        KeyError: ``return_kinds`` に ``period_returns`` の系列名がない場合。
+        KeyError: ``return_aggregations`` に ``period_returns`` の系列名がない場合。
 
     Examples:
         realized・h=1 なら、行 t のシグナルには行 t+1 の期間リターンが対応する::
@@ -1148,7 +1143,7 @@ def make_bundle(
             bundle = make_bundle(
                 signals,  # index=(date, asset_id)
                 {"total": period_ret},  # index=date（評価行 + 後ろに1行以上）
-                return_kinds={"total": "total"},
+                return_aggregations={"total": "cumprod"},
                 horizons=[1],
             )
             fwd = bundle.forward_returns["total"][1]  # index=dates, columns=asset_id
@@ -1168,7 +1163,7 @@ def make_bundle(
         missing = set(dates) - set(period.index)
         if missing:
             raise ValueError(f"period_returns[{name!r}] is missing dates: {sorted(missing)[:5]}")
-        method = AGGREGATION_BY_KIND[return_kinds[name]]
+        method = return_aggregations[name]
         period = _drop_out_of_range(
             period.sort_index(), f"{name!r} period returns", valid_range, warnings
         )
@@ -1186,7 +1181,7 @@ def make_bundle(
     return DataBundle(
         signals=signals.sort_index(),
         forward_returns=fwd,
-        return_kinds={k: return_kinds[k] for k in period_returns},
+        return_aggregations={k: return_aggregations[k] for k in period_returns},
         classification=classification,
         dates=tuple(dates),
     )

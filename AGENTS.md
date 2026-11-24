@@ -50,8 +50,10 @@ cli → api → validation / pipeline → data → io
 - 内部のカラム名は role 名（`date`, `asset_id`, `category`, `factor`, `value`）。定数は `data/columns.py`。
 - metric のパラメータは `MetricParams`（pydantic）で定義し、全項目にデフォルト値を持たせる。
   signals / returns / horizons を持つ場合は `SignalReturnParams` を継承すると存在チェックが自動で入る。
-- 期間をまたぐリターン集計は `ReturnAggregation`（算術平均と幾何平均を両方出す、累積は kind ごとに選択可）。
-  kind ごとの束ね方（total は複利、specific は加算）は `config.AGGREGATION_BY_KIND` の1か所で定義する。
+- リターン系列の名前は自由（`total` / `specific` 以外も可）。複数期間の束ね方は系列ごとに config の
+  `aggregation`（`cumprod` = 複利、`cumsum` = 加算）で指定し、`DataBundle.return_aggregations` で参照する。
+- 期間をまたぐリターン集計は `ReturnAggregation`（算術平均と幾何平均を両方出す、累積は系列の `aggregation` が
+  既定で、metric の `aggregation.cumulative` で系列名ごとに変更可）。
 - リスクモデルの `factor_covariance` はソースによらず index=(date, factor)、columns=ファクターの正方行列（年率の小数²）。
 - 型エイリアスは `TypeAlias` で書く。コメント・docstring は日本語。
 

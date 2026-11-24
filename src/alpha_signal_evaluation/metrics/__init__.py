@@ -18,7 +18,6 @@ metric はデータの結合と集計だけを行い、時点のずらしは一�
 """
 
 from .base import (
-    CUMULATIVE_DEFAULT,
     Metric,
     MetricParams,
     MetricResult,
@@ -28,7 +27,6 @@ from .base import (
 from .registry import discover_metrics, get_metric, list_metrics, register_metric
 
 __all__ = [
-    "CUMULATIVE_DEFAULT",
     "Metric",
     "MetricParams",
     "MetricResult",

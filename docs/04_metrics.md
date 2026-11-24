@@ -43,7 +43,7 @@ metrics:
 
 - 計算は、対象のシグナル × リターン系列 × ホライズンのすべての組について行われます。出力の表には `signal` / `returns` / `horizon` の列が付き、どの組の値かが分かります。
 - `horizons` は書いた順に関わらず昇順で処理されます。ホライズンの単位はカレンダーの行数です。
-- `returns` に書くのは系列名です。kind（`total` / `specific`）ではありません。example1 では系列名を kind と同じ `total` / `specific` にしているので一致して見えますが、系列名を `gem3_total` のように付けた場合は `returns: [gem3_total]` と書きます。
+- `returns` に書くのは、config で定義した系列名です。系列名は自由に付けられ（`total` / `specific` / `excess` / `usd_total` など）、名前によって計算は変わりません。系列名を `gem3_total` と付けた場合は `returns: [gem3_total]` と書きます。
 - 存在しない名前や、config の `horizons` にない値を書くと、計算前の検証でエラーになります（[03 の 11 章](03_config.md#意味の検証で出るエラー)）。
 
 3つとも持つのは `ic` / `quantile` / `category_ic` / `category_quantile` / `alpha_decay` です。`category_returns` は `returns` と `horizons` だけ、`autocorr` と `factor_correlation` は `signals` だけを持ちます。
@@ -62,22 +62,28 @@ metrics:
 - 1つでも −100% 以下のリターンがあると、`geo_mean` は欠損になります。
 - 平均は h 期間リターンのままの値です。1期間あたりへの換算はしません（ホライズン間で比べるときは `alpha_decay` の `spread_per_period` を使います）。
 
-**累積リターンは kind ごとに方法が決まります。** kind はリターン系列の種類で、`total`（トータルリターン）と `specific`（スペシフィックリターン。リスクモデルのファクターで説明されない、銘柄固有の部分）があります。
+**累積リターンは、既定ではリターン系列の `aggregation` で計算します。** `aggregation` は、`source: file` と `source: db` の `returns[].series` に系列ごとに書く必須の項目です（[03 の 6 章](03_config.md#6-returns)）。系列名は計算に影響しません。
 
-| kind | 既定の方法 | 計算 |
+| `aggregation` | 束ね方 | 累積リターンの計算 |
 |---|---|---|
-| `total` | `compound`（複利） | `(1 + r)` の累積積 − 1 |
-| `specific` | `sum`（単純加算） | `r` の累積和 |
+| `cumprod` | 複利 | `(1 + r).cumprod() − 1` |
+| `cumsum` | 単純加算 | `r.cumsum()` |
 
-この既定値は、データ準備が複数の期間のリターンを束ねてフォワードリターンを作るときの規約（total は複利、specific は加算。[02 の 4.4](02_features.md#44-フォワードリターンの定義)）と同じです。変更するときは、`aggregation.cumulative` に `{kind: 方法}` の形で `compound` か `sum` を書きます。書かなかった kind は既定値のままです。
+example1 の系列は、`total`（トータルリターン）が `cumprod`、`specific`（スペシフィックリターン。リスクモデルのファクターで説明されない、銘柄固有の部分）が `cumsum` です。
+
+系列の `aggregation` は、日次から期間への集約（`source: db` と `source: barra`。`source: file` は集約しません）、フォワードリターンの計算（[02 の 4.4](02_features.md#44-フォワードリターンの定義)）、`alpha_decay` の1期間あたりへの換算にも使います。`source: barra` の系列では `aggregation` を選べません。`series` の値で決まり、`total`（DRTN）は `cumprod`、`specific`（SRTN）は `cumsum` です（[03 の 6 章「source: barra のリターン」](03_config.md#source-barra-のリターン)）。
+
+累積リターンの方法だけを metric ごとに変えるときは、`aggregation.cumulative` に `{系列名: 方法}` の形で `cumprod` か `cumsum` を書きます。既定は `{}` で、書かなかった系列は系列自身の `aggregation` を使います。
 
 ```yaml
   - name: quantile
     params:
       aggregation:
-        cumulative: {specific: compound}   # total は既定の compound のまま
+        cumulative: {specific: cumprod}   # specific の累積だけ複利にする。他の系列は変わらない
 ```
 
+- `aggregation.cumulative` で変わるのは累積リターンの表（`cumulative`。`category_quantile` では `neutral_cumulative` も）だけです。フォワードリターンと、`returns` / `summary` などの他の表は変わりません。
+- config にない系列名を書くと、計算前の検証で `aggregation.cumulative: unknown return series [...]; available: [...]` のエラーになります。
 - 累積リターンを出すのはホライズン 1 だけです。ホライズンが 2 以上のフォワードリターンは隣の行と期間が重なるので、累積すると同じ期間を何度も数えてしまうためです。
 - リターンが欠損の行は、累積リターンも欠損になります。累積そのものは欠損の行を飛ばして続きます。評価期間の末尾で、先のリターンがまだないためにフォワードリターンが欠損の行も同じ扱いです。
 
@@ -274,7 +280,7 @@ summary のキー: `{signal}/{returns}/h{horizon}/mean_ic` と `.../t_stat`。
 | `signals` / `returns` / `horizons` | リスト | `null` | 共通パラメータ |
 | `n_quantiles` | 整数 | `5` | 分位数。2 以上 |
 | `demean` | 真偽値 | `false` | `true` なら日付ごとの平均を引いた超過リターンで集計する |
-| `aggregation` | 辞書 | `{cumulative: {total: compound, specific: sum}}` | kind ごとの累積リターンの方法（[1.3](#13-リターンの集計規約-aggregation)） |
+| `aggregation` | 辞書 | `{cumulative: {}}` | 系列名ごとの累積リターンの方法。書かなかった系列は系列の `aggregation` を使う（[1.3](#13-リターンの集計規約-aggregation)） |
 
 **出力**
 
@@ -300,8 +306,8 @@ summary のキー: spread について `{signal}/{returns}/h{horizon}/arith_mean
 **読み方と注意点**
 
 - `demean` を切り替えても spread は変わりません（上位と下位から同じ平均を引くためです）。変わるのは Q1〜Q{n} の値で、`true` にすると各分位がユニバース平均をどれだけ上回ったかになります。
-- `cumulative` の spread は、日付ごとの spread を1本のリターン系列として累積したものです。複利（`compound`）の場合、Q{n} の累積と Q1 の累積の差とは一致しません。
-- total（複利）と specific（加算）は累積の方法が違うので、両者の累積リターンの差はファクター寄与と厳密には一致しません。
+- `cumulative` の spread は、日付ごとの spread を1本のリターン系列として累積したものです。複利（`cumprod`）の場合、Q{n} の累積と Q1 の累積の差とは一致しません。
+- example1 の `total`（`cumprod`）と `specific`（`cumsum`）は累積の方法が違うので、両者の累積リターンの差はファクター寄与と厳密には一致しません。
 
 **config の例**
 
@@ -311,7 +317,7 @@ summary のキー: spread について `{signal}/{returns}/h{horizon}/arith_mean
     params:
       n_quantiles: 10
       demean: true
-      aggregation: {cumulative: {specific: compound}}
+      aggregation: {cumulative: {specific: cumprod}}
 ```
 
 ### category_ic
@@ -379,7 +385,7 @@ summary のキー: ありません（結果は表だけです）。
 | `signals` / `returns` / `horizons` | リスト | `null` | 共通パラメータ |
 | `n_quantiles` | 整数 | `5` | カテゴリ内の分位数。2 以上 |
 | `column` | 文字列 | `category` | カテゴリとして使う分類データの列名 |
-| `aggregation` | 辞書 | `{cumulative: {total: compound, specific: sum}}` | kind ごとの累積リターンの方法（[1.3](#13-リターンの集計規約-aggregation)） |
+| `aggregation` | 辞書 | `{cumulative: {}}` | 系列名ごとの累積リターンの方法。書かなかった系列は系列の `aggregation` を使う（[1.3](#13-リターンの集計規約-aggregation)） |
 
 **出力**
 
@@ -424,7 +430,7 @@ summary のキー: カテゴリ中立の spread について `{signal}/{returns}
 |---|---|---|---|
 | `returns` / `horizons` | リスト | `null` | 共通パラメータ（`signals` はありません） |
 | `column` | 文字列 | `category` | カテゴリとして使う分類データの列名 |
-| `aggregation` | 辞書 | `{cumulative: {total: compound, specific: sum}}` | kind ごとの累積リターンの方法（[1.3](#13-リターンの集計規約-aggregation)） |
+| `aggregation` | 辞書 | `{cumulative: {}}` | 系列名ごとの累積リターンの方法。書かなかった系列は系列の `aggregation` を使う（[1.3](#13-リターンの集計規約-aggregation)） |
 
 **出力**
 
@@ -459,7 +465,7 @@ summary のキー: ありません（結果は表だけです）。
 
 1. `ic` と同じ方法で日付ごとの IC を求め、平均と t 値を取ります。
 2. `quantile` と同じ方法で分位を割り当て、日付ごとに spread = Q{n} − Q1 を求め、平均と t 値を取ります。
-3. `spread_per_period` を求めます。Q{n} と Q1 のそれぞれについて、h 期間リターンの時系列平均を1期間あたりに換算し、その差を取ります。換算方法は kind で決まります（total: `(1 + r)^(1/h) − 1`、specific: `r / h`）。
+3. `spread_per_period` を求めます。Q{n} と Q1 のそれぞれについて、h 期間リターンの時系列平均を1期間あたりに換算し、その差を取ります。換算方法は系列の `aggregation` で決まります（`cumprod`: `(1 + r)^(1/h) − 1`、`cumsum`: `r / h`）。
 
 **パラメータ**
 
@@ -494,7 +500,7 @@ summary のキー: `{signal}/{returns}/h{horizon}/mean_ic` と `.../spread_per_p
   | 6 | 0.108 | 0.0609 | 0.0096 |
 
 - 減衰を見るには、config の `horizons` に複数の値（例: `[1, 3, 6]`）が必要です。
-- `spread_per_period` の換算方法は kind で固定で、変更するパラメータはありません。
+- `spread_per_period` の換算方法は系列の `aggregation` で決まります。`alpha_decay` に `aggregation` パラメータはないので、metric 側では変更できません。
 
 **config の例**
 
@@ -614,7 +620,7 @@ summary のキー: シグナル同士の組について `{a}/{b}/mean_corr`。�
 
 ## 4. 用語
 
-シグナル、metric、カレンダー、日付キー、ホライズン、フォワードリターン、リターン系列、kind、DataBundle など、マニュアル全体で使う用語は [01 の「この文書で使う用語」](01_design.md#この文書で使う用語) を参照してください。ここには、この文書で特に使う用語だけを挙げます。
+シグナル、metric、カレンダー、日付キー、ホライズン、フォワードリターン、リターン系列、DataBundle など、マニュアル全体で使う用語は [01 の「この文書で使う用語」](01_design.md#この文書で使う用語) を参照してください。ここには、この文書で特に使う用語だけを挙げます。
 
 | 用語 | 意味 |
 |---|---|
@@ -624,7 +630,7 @@ summary のキー: シグナル同士の組について `{a}/{b}/mean_corr`。�
 | IC | Information Coefficient。ある日付の、シグナルとフォワードリターンのクロスセクション相関 |
 | 分位 | 日付ごとにシグナルの順位で銘柄をほぼ同数のグループに分けたもの。Q1 がシグナル最小、Q{n} が最大 |
 | spread | 最上位の分位と最下位の分位の平均リターンの差（Q{n} − Q1） |
-| compound / sum | 複数期間のリターンの束ね方。compound は複利、sum は単純加算（[1.3](#13-リターンの集計規約-aggregation)） |
+| cumprod / cumsum | リターン系列の `aggregation` に指定する、複数期間のリターンの束ね方。cumprod は複利、cumsum は単純加算（[1.3](#13-リターンの集計規約-aggregation)） |
 | 算術平均 / 幾何平均 | 期間リターンの単純平均 / 複利で均した平均（[1.3](#13-リターンの集計規約-aggregation)） |
 | Newey-West t 値 | 時系列の系列相関を考慮した標準誤差で求めた t 値（[1.4](#14-t-値の計算方法)） |
 | hit_rate | 値が正だった期間の割合 |

@@ -9,7 +9,7 @@ from typing import Literal, TypeAlias
 import numpy as np
 import pandas as pd
 
-from ..config import Aggregation, ReturnKind
+from ..config import Aggregation
 from ..data.columns import DATE
 from .base import ReturnAggregation
 
@@ -205,19 +205,17 @@ def summarize_portfolios(
     return rows
 
 
-def cumulative_portfolios(
-    wide: pd.DataFrame, kind: ReturnKind, aggregation: ReturnAggregation
-) -> pd.DataFrame:
+def cumulative_portfolios(wide: pd.DataFrame, method: Aggregation) -> pd.DataFrame:
     """ポートフォリオ（``wide`` の列）ごとの累積リターンを long 形式で返す。
 
-    累積方法はリターンの kind ごとに ``aggregation`` で決まる。重複のない h = 1 の
+    ``method`` は累積方法（``ReturnAggregation.method_for`` の戻り値）。重複のない h = 1 の
     リターンに使う。
 
     Returns:
         columns=[date, portfolio, cumulative_return] の DataFrame。
     """
     return (
-        aggregation.cumulate(wide, kind)
+        ReturnAggregation.cumulate(wide, method)
         .reset_index()
         .melt(id_vars=DATE, var_name="portfolio", value_name="cumulative_return")
     )
@@ -226,20 +224,25 @@ def cumulative_portfolios(
 def per_period_rate(r: float | pd.Series, horizon: int, method: Aggregation):
     """h 期間のリターンを1期間あたりのリターンに換算する。
 
-    ``method="compound"`` なら幾何的に ``(1 + r) ** (1 / horizon) - 1``、``"sum"`` なら
+    ``method="cumprod"`` なら幾何的に ``(1 + r) ** (1 / horizon) - 1``、``"cumsum"`` なら
     算術的に ``r / horizon``。
 
     Args:
         r: h 期間のリターン（スカラーまたは Series）。
         horizon: ホライズン（カレンダーの行数）。
-        method: ``"compound"`` または ``"sum"``。
+        method: ``"cumprod"`` または ``"cumsum"``。
 
     Returns:
         ``r`` と同じ型の1期間あたりのリターン。
+
+    Raises:
+        ValueError: ``method`` が ``"cumprod"`` / ``"cumsum"`` 以外の場合。
     """
-    if method == "compound":
+    if method == "cumprod":
         return (1 + r) ** (1 / horizon) - 1
-    return r / horizon
+    if method == "cumsum":
+        return r / horizon
+    raise ValueError(f"Unknown aggregation {method!r}; expected 'cumprod' or 'cumsum'")
 
 
 def flatten_summary(frame: pd.DataFrame, keys: list[str], stats: list[str]) -> dict[str, float]:

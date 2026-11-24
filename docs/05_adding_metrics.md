@@ -24,7 +24,7 @@ metric は「`DataBundle` を受け取り `MetricResult` を返すクラス」�
 
 metric はデータの結合と集計だけを行います。データの読み込み、時点合わせ、ファイルへの出力は metric の外側で行われます。
 
-カレンダー（1行が1評価期間）、ホライズン、フォワードリターン、リターン系列（config の `returns` で名前を付けたリターン）、kind（リターン系列の種類。`total` か `specific`）などの用語は [01_design.md の「この文書で使う用語」](01_design.md#この文書で使う用語) にまとめてあります。そこにない用語で、この文書で使うものは次のとおりです。
+カレンダー（1行が1評価期間）、ホライズン、フォワードリターン、リターン系列（config の `returns` で名前を付けたリターン）などの用語は [01_design.md の「この文書で使う用語」](01_design.md#この文書で使う用語) にまとめてあります。そこにない用語で、この文書で使うものは次のとおりです。
 
 | 用語 | 意味 |
 |---|---|
@@ -338,7 +338,7 @@ metric のクラスは、基底クラス `Metric`（`metrics/base.py`）を継�
 | 名前 | 使えるデータ | config で用意される条件 |
 |---|---|---|
 | `signals` | `data.signals` | `data` セクションがある |
-| `forward_returns` | `data.forward_returns`、`data.return_kinds` | `returns` が1つ以上ある |
+| `forward_returns` | `data.forward_returns`、`data.return_aggregations` | `returns` が1つ以上ある |
 | `classification` | `data.classification` | `data.classification` がある |
 | `risk_models` | `data.risk_models`（全構成要素） | `risk_models` がある |
 | `risk_models.exposures` / `risk_models.factor_covariance` / `risk_models.specific_risk` / `risk_models.factor_returns` | リスクモデルのその構成要素だけ | `risk_models` にその構成要素がある |
@@ -394,17 +394,18 @@ cls(cls.Params(top_pct=10))
 
 - `requires` のデータが config で用意されているか
 - `params.signals` / `params.returns` / `params.horizons` が config に存在するか
+- `params.aggregation.cumulative` のキーが定義済みのリターン系列か（`aggregation` が `ReturnAggregation` の場合）
 - `params.risk_model` が定義済みのリスクモデルか
 
-`Params` だけでは判断できない検証を足す場合は上書きし、`super().check()` の結果に追加して返します。第2引数の `spec`（`DataSpec`）は、データの中身を持たない「何が揃っているか」の記述で、`provides`（使えるデータ名）、`signals`、`return_kinds`（リターン系列名 → kind）、`horizons`、`risk_models`（名前 → 構成要素名）を持ちます。次は、kind が `specific` のリターン系列を受け付けない metric の例です。
+`Params` だけでは判断できない検証を足す場合は上書きし、`super().check()` の結果に追加して返します。第2引数の `spec`（`DataSpec`）は、データの中身を持たない「何が揃っているか」の記述で、`provides`（使えるデータ名）、`signals`、`return_aggregations`（リターン系列名 → `cumprod` / `cumsum`）、`horizons`、`risk_models`（名前 → 構成要素名）を持ちます。次は、`aggregation` が `cumsum` のリターン系列を受け付けない metric の例です。
 
 ```python
 @classmethod
 def check(cls, params, spec):
-    errors = super().check(params, spec)  # requires・signals・returns・horizons の検証
-    for name in params.returns or spec.return_kinds:
-        if spec.return_kinds.get(name) == "specific":
-            errors.append(f"return series {name!r} is kind=specific; only total is supported")
+    errors = super().check(params, spec)  # 上の一覧の検証
+    for name in params.returns or spec.return_aggregations:
+        if spec.return_aggregations.get(name) == "cumsum":
+            errors.append(f"return series {name!r} uses cumsum; only cumprod is supported")
     return errors
 ```
 
@@ -434,8 +435,8 @@ def check(cls, params, spec):
 | 属性 | 形 | 内容 |
 |---|---|---|
 | `signals` | DataFrame。index=(`date`, `asset_id`)、columns=シグナル名 | シグナル値 |
-| `forward_returns` | 辞書。リターン系列名 → ホライズン → DataFrame（index=`date`、columns=`asset_id`） | フォワードリターン。行 t の値は、行 t のシグナルに対応する h 行先までのリターンです。h 行分を束ねる方法は kind が `total` なら複利、`specific` なら加算です（[02_features.md の 4.4](02_features.md#44-フォワードリターンの定義)）。通常は `aligned()` で取り出します |
-| `return_kinds` | 辞書。リターン系列名 → `"total"` / `"specific"` | リターン系列の kind |
+| `forward_returns` | 辞書。リターン系列名 → ホライズン → DataFrame（index=`date`、columns=`asset_id`） | フォワードリターン。行 t の値は、行 t のシグナルに対応する h 行先までのリターンです。h 行分を束ねる方法はリターン系列の `aggregation` で決まり、`cumprod` なら複利、`cumsum` なら加算です（[02_features.md の 4.4](02_features.md#44-フォワードリターンの定義)）。通常は `aligned()` で取り出します |
+| `return_aggregations` | 辞書。リターン系列名 → `"cumprod"` / `"cumsum"` | リターン系列の束ね方。期間集約、フォワードリターン、1期間あたりへの換算に使われ、累積リターンの既定にもなります |
 | `classification` | DataFrame。index=(`date`, `asset_id`)、columns=[`category`, ...]。なければ `None` | 銘柄の分類（業種など） |
 | `risk_models` | 辞書。リスクモデル名 → `RiskModelData` | リスクモデル。なければ空の辞書。通常は `risk_model()` で取り出します |
 | `benchmark_weights` | DataFrame。index=(`date`, `asset_id`)、columns=[`weight`]。なければ `None` | ベンチマークウェイト |
@@ -503,8 +504,8 @@ def check(cls, params, spec):
 | `assign_quantiles(values, n_quantiles, by=None)` | 日付（と `by`）ごとに 1（最小）〜 n の分位を割り当てる | 分位ポートフォリオ |
 | `quantile_portfolios(df, quantile, n_quantiles, dates)` | 分位ごとの等ウェイト平均リターン（long）と、Q1..Qn・spread の wide | 分位ポートフォリオ |
 | `summarize_portfolios(wide, horizon, aggregation)` | 各ポートフォリオの算術平均・幾何平均。spread には t 値と正の割合 | 分位ポートフォリオの要約 |
-| `cumulative_portfolios(wide, kind, aggregation)` | ポートフォリオごとの累積リターン（long） | ホライズン 1 の累積リターン |
-| `per_period_rate(r, horizon, method)` | h 期間のリターンを1期間あたりに換算（`compound` / `sum`） | ホライズン間の比較 |
+| `cumulative_portfolios(wide, method)` | ポートフォリオごとの累積リターン（long）。`method` は `method_for` の戻り値を渡します | ホライズン 1 の累積リターン |
+| `per_period_rate(r, horizon, method)` | h 期間のリターンを1期間あたりに換算（`cumprod` / `cumsum`）。`method` には、そのリターンを束ねた方法 `data.return_aggregations[ret]` を渡します | ホライズン間の比較 |
 | `flatten_summary(frame, keys, stats)` | 要約の表を `"{signal}/{returns}/h{horizon}/{stat}"` の辞書にする | `MetricResult.summary` |
 | `concat(frames)` | DataFrame のリストを縦に連結（空リストなら空の DataFrame） | 組ごとの結果の連結 |
 | `CorrMethod` | 型エイリアス（`"spearman"` / `"pearson"`） | 相関の種類を選ぶパラメータの型（例: `method: CorrMethod = "spearman"`） |
@@ -512,9 +513,9 @@ def check(cls, params, spec):
 期間をまたぐリターンの集計（平均や累積）には `ReturnAggregation`（`metrics/base.py`）を使います。規約は次の2つです。
 
 - 平均は算術平均と幾何平均の両方を出します（`summarize`）。
-- 累積は kind ごとに方法が決まります（`cumulate`）。既定は `total` が複利、`specific` が加算です。
+- 累積の方法はリターン系列ごとに決まります。既定は系列の `aggregation`（`data.return_aggregations[ret]`）で、`cumprod` は複利 `(1 + r).cumprod() - 1`、`cumsum` は加算 `r.cumsum()` です。`method_for(series, default)` で方法を取り出し、`cumulate(returns, method)` で累積します。
 
-`Params` に項目として持たせると、利用者が config で `aggregation: {cumulative: {specific: compound}}` のように変更できます（利用者から見た仕様は [04_metrics.md の 1.3](04_metrics.md#13-リターンの集計規約-aggregation)）。
+`Params` に項目として持たせると、利用者が config で `aggregation: {cumulative: {specific: cumprod}}`（`specific` はリターン系列名）のように系列ごとに変更できます。定義されていない系列名は、基底クラスの `check` が計算前にエラーにします（利用者から見た仕様は [04_metrics.md の 1.3](04_metrics.md#13-リターンの集計規約-aggregation)）。
 
 ```python
 from pydantic import Field
@@ -527,12 +528,14 @@ class MyParams(SignalReturnParams):
 
 
 # compute の中（p = self.params、ret はリターン系列名）。r はホライズン 1 のリターンの時系列（index=date）
-kind = data.return_kinds[ret]                  # "total" / "specific"
-stats = p.aggregation.summarize(r)             # {"arith_mean": ..., "geo_mean": ...}
-cumulative = p.aggregation.cumulate(r, kind)   # r と同じ形の累積リターン
+method = p.aggregation.method_for(ret, data.return_aggregations[ret])  # "cumprod" / "cumsum"
+stats = p.aggregation.summarize(r)               # {"arith_mean": ..., "geo_mean": ...}
+cumulative = p.aggregation.cumulate(r, method)   # r と同じ形の累積リターン
 ```
 
 累積はホライズン 1 のリターンにだけ使います。ホライズンが 2 以上のフォワードリターンは隣り合う日付で期間が重なるため、累積には使えません。
+
+`aggregation.cumulative` で変わるのは累積リターンだけです。フォワードリターンと1期間あたりへの換算は、系列の `aggregation` のままです。
 
 ## 8. やってはいけないこと
 
@@ -574,7 +577,7 @@ uv run pytest tests/metrics/test_contract.py
 |---|---|
 | 大きさ | 36 行（月末日）× 80 銘柄。引数 `n_dates` / `n_assets` / `horizons` / `seed` / `missing_rate` で変更可 |
 | シグナル | `alpha`（次の行のスペシフィックリターンを予測する）、`noise`（無関係）、`mixed`（両者の平均）。約 5% がランダムに欠損 |
-| リターン系列 | `total`（kind=total）、`specific`（kind=specific）。ホライズンは 1 と 3 |
+| リターン系列 | `total`（`aggregation` は `cumprod`）、`specific`（`aggregation` は `cumsum`）。ホライズンは 1 と 3 |
 | その他 | 分類（`category` 列に `S0`〜`S4`）、リスクモデル `barra`（エクスポージャー、ファクター共分散、スペシフィックリスク、ファクターリターン）、ベンチマークウェイト |
 
 答えがわかっているデータなので、「`alpha` は効き、`noise` は効かない」ことを確かめるテストが書けます。`tests/conftest.py` に、この `DataBundle` を返すフィクスチャ `bundle` があります（全テストで共有されるので、書き換えないでください）。次は `tests/metrics/test_top_pct_excess.py` の例です。

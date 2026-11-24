@@ -35,7 +35,7 @@ def make_synthetic_bundle(
 
     - シグナル ``alpha`` は次の行（realized 規約で行 t+1）のスペシフィックリターンを予測する
     - ``noise`` は無関係、``mixed`` は両者の平均
-    - リターン系列 ``total``（kind=total）と ``specific``（kind=specific）
+    - リターン系列 ``total``（aggregation=cumprod）と ``specific``（aggregation=cumsum）
     - 業種分類（5業種）と、リスクモデル ``barra``（スタイル2つ・業種2つ）
 
     データの構成:
@@ -142,7 +142,7 @@ def make_synthetic_bundle(
     bundle = make_bundle(
         signals,
         {"total": wide(systematic + specific), "specific": wide(specific)},
-        return_kinds={"total": "total", "specific": "specific"},
+        return_aggregations={"total": "cumprod", "specific": "cumsum"},
         horizons=list(horizons),
         classification=classification,
         dates=keys[:n_dates],
@@ -165,7 +165,7 @@ def make_synthetic_bundle(
         columns=pd.Index(factors, name=FACTOR),
     )
     specific_risk = long(np.full((n_rows, n_assets), 0.03 * np.sqrt(12)), "specific_risk")
-    fwd_factor = forward_returns(factor_ret, list(horizons), "realized", "sum")
+    fwd_factor = forward_returns(factor_ret, list(horizons), "realized", "cumsum")
     risk_model = RiskModelData(
         exposures=exposures,
         factor_covariance=factor_covariance,

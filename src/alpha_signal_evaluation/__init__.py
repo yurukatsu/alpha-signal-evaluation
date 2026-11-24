@@ -36,7 +36,7 @@ Python API::
     from alpha_signal_evaluation import evaluate, make_bundle
 
     data = make_bundle(signals, {"total": period_returns},
-                       return_kinds={"total": "total"}, horizons=[1])
+                       return_aggregations={"total": "cumprod"}, horizons=[1])
     report = evaluate({"version": 1, "metrics": [{"name": "ic"}]}, data=data)
 """
 

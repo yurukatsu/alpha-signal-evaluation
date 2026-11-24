@@ -79,7 +79,7 @@ report.at("20240531")["ic"]["timeseries"]  # ある日付の断面（その日�
 bundle = make_bundle(
     signals,                                  # index=(date, asset_id), columns=シグナル
     {"total": total_ret, "specific": spec_ret},  # 期間リターン（index=date, columns=asset_id）
-    return_kinds={"total": "total", "specific": "specific"},
+    return_aggregations={"total": "cumprod", "specific": "cumsum"},
     horizons=[1, 3],
 )
 report = evaluate({"version": 1, "metrics": [{"name": "ic"}]}, data=bundle)
@@ -105,10 +105,10 @@ InformationCoefficient(method="pearson").compute(bundle)
 - 業種分類が one-hot（`L001`〜`L010` 等）の場合は `one_hot: true`。
 - ベンチマークウェイトは `benchmark`（`columns` に `asset_id` と `weight`）で指定する。
   省略時はユニバースの `columns` に `weight` があればそれを使う。
-- リターンは名前付き系列の集合。各系列の `kind`（`total` / `specific`）から集約方法が決まる
-  （期間内: total は複利・specific は加算）。
+- リターンは名前付き系列の集合で、系列名は自由（`total` / `specific` 以外も可）。複数期間の束ね方は系列ごとに
+  `aggregation` で指定する（`cumprod` = 複利、`cumsum` = 加算）。
 - リターンのソースの `valid_range`（既定 `[-1, 10]` = -100% 〜 +1000%）の外の値は、DB の特殊値などの
-  データの誤りとして欠損にし、件数と例を警告する（DB / Barra は日次、ファイルは期間の値。total・specific とも）。
+  データの誤りとして欠損にし、件数と例を警告する（DB / Barra は日次、ファイルは期間の値。全系列）。
   統計的な外れ値の処理ではないので、範囲は壊れた値だけを外す緩い値にする（下限は -1 以上）。
 - DB ソースは日次で1クエリにまとめて取得し、カレンダー期間に集約する。`match_on` が日付（8桁）なら
   前行の日付の翌日〜当該行の日付、月（6桁）ならその月の1日〜月末日を1期間とする。SQL は `WHERE dt > :start AND dt <= :end`

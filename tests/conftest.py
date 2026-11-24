@@ -125,8 +125,8 @@ class Dataset:
                     "path": "returns/{Base_day}.csv",
                     "columns": {"asset_id": "code"},
                     "series": {
-                        "total": {"column": "ret", "kind": "total"},
-                        "specific": {"column": "sret", "kind": "specific"},
+                        "total": {"column": "ret", "aggregation": "cumprod"},
+                        "specific": {"column": "sret", "aggregation": "cumsum"},
                     },
                 }
             ],

@@ -116,7 +116,7 @@ def test_db_returns_are_aggregated_by_calendar_month(tmp_path, monkeypatch, db_e
                 "query": "returns.sql",
                 "match_on": "Month",
                 "columns": {"date": "dt", "asset_id": "bid"},
-                "series": {"total": {"column": "ret", "kind": "total"}},
+                "series": {"total": {"column": "ret", "aggregation": "cumprod"}},
             }
         ],
         "metrics": [{"name": "ic", "params": {"min_obs": 5}}],

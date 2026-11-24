@@ -156,7 +156,7 @@ class CategoryQuantileParams(SignalReturnParams):
         column: カテゴリとして使う classification の列（role 名）。
             デフォルト ``"category"``。
         aggregation: 期間をまたぐ集計の規約（:class:`~.base.ReturnAggregation`）。
-            累積リターンの方法を kind ごとに指定できる。
+            累積リターンの方法をリターン系列ごとに指定できる。
     """
 
     n_quantiles: int = Field(default=5, ge=2)
@@ -233,29 +233,29 @@ class CategoryQuantile(Metric):
             )
         }
 
-        def collect(prefix: str, df: pd.DataFrame, key: dict, kind: str, h: int) -> None:
+        def collect(prefix: str, df: pd.DataFrame, key: dict, method: str, h: int) -> None:
             """``df``（``quantile`` 列付き）の分位ポートフォリオを集計して ``tables`` に足す。"""
             long, wide = quantile_portfolios(df, df["quantile"], n, dates)
             tables[f"{prefix}returns"].append(long.assign(**key))
             rows = summarize_portfolios(wide, h, p.aggregation)
             tables[f"{prefix}summary"] += [{**key, **row} for row in rows]
             if h == 1:  # 重複のない1期間ホライズンだけ累積リターンを出す
-                cum = cumulative_portfolios(wide, kind, p.aggregation)
+                cum = cumulative_portfolios(wide, method)
                 tables[f"{prefix}cumulative"].append(
                     cum.assign(**{k: v for k, v in key.items() if k != "horizon"})
                 )
 
         for signal in data.resolve_signals(p.signals):
             for ret in data.resolve_returns(p.returns):
-                kind = data.return_kinds[ret]
+                method = p.aggregation.method_for(ret, data.return_aggregations[ret])
                 for h in data.resolve_horizons(p.horizons):
                     df = data.aligned(signal, ret, h).join(classification, how="inner")
                     df = df.dropna(subset=[p.column])
                     df["quantile"] = assign_quantiles(df[signal], n, by=df[p.column])
                     key = {"signal": signal, "returns": ret, "horizon": h}
-                    collect("neutral_", df, key, kind, h)
+                    collect("neutral_", df, key, method, h)
                     for category, sub in df.groupby(p.column):
-                        collect("", sub, {**key, p.column: category}, kind, h)
+                        collect("", sub, {**key, p.column: category}, method, h)
 
         frames = {
             name: concat(rows) if name.endswith(("returns", "cumulative")) else pd.DataFrame(rows)
@@ -290,7 +290,7 @@ class CategoryReturnsParams(MetricParams):
         column: カテゴリとして使う classification の列（role 名）。
             デフォルト ``"category"``。
         aggregation: 期間をまたぐ集計の規約（:class:`~.base.ReturnAggregation`）。
-            累積リターンの方法を kind ごとに指定できる。
+            累積リターンの方法をリターン系列ごとに指定できる。
     """
 
     returns: list[str] | None = None
@@ -309,7 +309,7 @@ class CategoryReturns(Metric):
     どう動いたかを見るためのもの（シグナルの業種への偏りの影響を読むときの比較対象）。
 
     各カテゴリの時系列について算術平均と幾何平均を求め、ホライズン 1 のときだけ
-    累積リターンを作る（累積方法はリターンの kind ごとに ``aggregation`` で決まる）。
+    累積リターンを作る（累積方法はリターン系列の ``aggregation`` で決まり、params で変えられる）。
 
     パラメータは :class:`CategoryReturnsParams` を参照。以下 ``<column>`` は
     ``params.column`` の値（デフォルト ``category``）の列名を表す。
@@ -350,7 +350,7 @@ class CategoryReturns(Metric):
         classification = data.classification[[p.column]].dropna()
         returns_rows, cumulative_rows, summary = [], [], []
         for ret in data.resolve_returns(p.returns):
-            kind = data.return_kinds[ret]
+            method = p.aggregation.method_for(ret, data.return_aggregations[ret])
             for h in data.resolve_horizons(p.horizons):
                 fwd = data.forward_returns[ret][h].stack().dropna().rename("forward_return")
                 fwd.index.names = [DATE, ASSET_ID]
@@ -374,7 +374,7 @@ class CategoryReturns(Metric):
                     )
                 # 重複のない1期間ホライズンだけ累積リターンを出す
                 if h == 1:
-                    cum = p.aggregation.cumulate(wide, kind).reset_index()
+                    cum = p.aggregation.cumulate(wide, method).reset_index()
                     cumulative_rows.append(
                         cum.melt(
                             id_vars=DATE, var_name=p.column, value_name="cumulative_return"

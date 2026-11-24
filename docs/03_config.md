@@ -8,7 +8,7 @@ config.yaml に書けるすべての項目について、「何を指定する�
 
 - モジュールの全体像は [02 の 1 章](02_features.md#1-全体像)、シグナルとリターンの時点の対応（時点合わせ）の規則は [02 の 4 章](02_features.md#4-時点合わせの仕様)、
   metric ごとのパラメータは [04 の 3 章](04_metrics.md#3-metric-ごとの仕様) にあります。
-- シグナル、カレンダー、ホライズン、フォワードリターン、kind、DataBundle などの用語は [01 の「この文書で使う用語」](01_design.md#この文書で使う用語) にまとめています。
+- シグナル、カレンダー、ホライズン、フォワードリターン、DataBundle などの用語は [01 の「この文書で使う用語」](01_design.md#この文書で使う用語) にまとめています。
   この文書では、カレンダーの `calendar.index` の列の値（`20240531` のような8桁の日付、または `202405` のような6桁の月）を「日付キー」と呼びます。
 - 例には、リポジトリに同梱の2つのサンプルを使います。example1（`examples/example1`）は日付キーが8桁の日付の月次データ、
   example2（`examples/example2`）は日付キーが6桁の月の月次データで、どちらも値が乱数の合成データです（[12 章](#12-付録-すべての項目を載せた例)）。
@@ -63,7 +63,7 @@ returns:
     path: ./input/returns/{Base_day}.csv
     columns: {asset_id: nri_code}
     series:
-      total: {column: ret, kind: total}
+      total: {column: ret, aggregation: cumprod}
 
 metrics:
   - name: ic
@@ -139,9 +139,9 @@ nri_code,ret,sret
    書き方は [source: file](#source-file)、行とファイルの対応の具体例は [02 の 4.2](02_features.md#42-どのデータがどの行に対応するか) にあります。
 3. **リターンの convention を確認する。** リターンのデータで、カレンダーの行 t の値が「行 t−1 から行 t まで」のリターン（`realized`）か、
    「行 t から行 t+1 まで」のリターン（`forward`）かを確かめます。取り違えると、シグナルに対応させるリターンが1行ずれます。
-   キーの説明は [returns のソースに共通のキー](#returns-のソースに共通のキー-series--kind--convention--valid_range)、定義は [02 の 4.3](02_features.md#43-conventionrealized--forward) にあります。
+   キーの説明は [returns のソースに共通のキー](#returns-のソースに共通のキー-series--aggregation--convention--valid_range)、定義は [02 の 4.3](02_features.md#43-conventionrealized--forward) にあります。
 4. **`columns` / `values` / `series` を書く。** 各ソースの `columns` で、銘柄コードなどの列を role に対応付けます（[columns: role と実カラム名の対応](#columns-role-と実カラム名の対応)）。
-   シグナルは `values` で、読む列とシグナル名を指定します（[data.signals](#datasignals)）。リターンは `series` で、読む列・系列名・kind を指定します（[6. returns](#6-returns)）。
+   シグナルは `values` で、読む列とシグナル名を指定します（[data.signals](#datasignals)）。リターンは `series` で、読む列・系列名・束ね方（`aggregation`）を指定します（[6. returns](#6-returns)）。
    カンマ区切りでヘッダーのある csv 以外のファイル（タブ区切り、ヘッダーなし、コメント行つきなど）には、`read_options` も書きます（[source: file](#source-file)）。
 5. **検証してから実行する。** 次の順に進めます（`config.yaml` は自分の config のパスに読み替えてください）。
    コマンドの出力の読み方は [11. 検証とよくある設定ミス](#11-検証とよくある設定ミス) にあります。
@@ -329,8 +329,8 @@ returns:
     match_on: Trading_day
     columns: {date: dt, asset_id: code}
     series:
-      total:    {column: ret,  kind: total}
-      specific: {column: sret, kind: specific}
+      total:    {column: ret,  aggregation: cumprod}
+      specific: {column: sret, aggregation: cumsum}
 ```
 
 SQL の書き方の決まりは次のとおりです。
@@ -453,23 +453,40 @@ universe:
 ## 6. returns
 
 リターンは「名前付きの系列」の集合として定義します。`returns` はソースのリストで、各ソースが1つ以上の系列を持ちます。
-metric は系列名（例: `total`、`specific`）でリターンを指定します。
+metric は系列名（例: `total`、`specific`、`excess`、`usd_total`）でリターンを指定します。
 
-### returns のソースに共通のキー: series / kind / convention / valid_range
+### returns のソースに共通のキー: series / aggregation / convention / valid_range
 
 | キー | 型 | 既定値 | 説明 |
 |---|---|---|---|
-| `series` | `{系列名: {column, kind}}` | 必須（1件以上。`barra` は既定値あり） | 系列の定義 |
+| `series` | `{系列名: {column, aggregation}}` | 必須（1件以上。`barra` は書き方が異なり、既定値があります） | 系列の定義 |
 | `series.<系列名>.column` | 文字列 | 必須 | ソース上の実カラム名 |
-| `series.<系列名>.kind` | `total` / `specific` | 必須 | リターンの種類。束ね方がここから決まります |
+| `series.<系列名>.aggregation` | `cumprod` / `cumsum` | 必須 | 複数の期間のリターンを束ねる方法 |
 | `convention` | `realized` / `forward` | `realized` | カレンダーの行 t のリターンが、どの期間のリターンかの約束 |
 | `valid_range` | `[下限, 上限]` | `[-1, 10]` | リターンとして有効な範囲（両端を含む）。範囲外の値は欠損にします |
 
 それぞれの規則の詳しい説明と数値例は、[02 の 4 章](02_features.md#4-時点合わせの仕様) にあります。ここでは、config を書くときに必要な点だけを述べます。
 
-**series と kind**: `kind` には、その列がトータルリターン（`total`）かスペシフィックリターン（`specific`）かを書きます。
-複数の期間のリターンを束ねる方法は kind で決まり、config では選べません（`total` は複利、`specific` は加算。式は [02 の 4.4](02_features.md#44-フォワードリターンの定義)）。
+**series と aggregation**: `aggregation` には、その系列を複数の期間にわたって束ねる方法を書きます。
+
+| 値 | 束ね方 | 累積の計算 | サンプルの config で使っている系列 |
+|---|---|---|---|
+| `cumprod` | 複利 | `(1 + r).cumprod() - 1` | トータルリターン（`total`） |
+| `cumsum` | 加算 | `r.cumsum()` | スペシフィックリターン（`specific`） |
+
+系列の `aggregation` は、次の計算に使います（式は [02 の 4.4](02_features.md#44-フォワードリターンの定義)）。
+
+- 日次のリターンからカレンダーの期間への集約（`db` と `barra`）
+- フォワードリターンの計算
+- `alpha_decay` の1期間あたりへの換算（`spread_per_period`）
+- 累積リターンの表の既定の計算方法
+
 系列名は自由に付けられますが、すべてのソースを通して一意でなければなりません。
+束ね方は系列名からは決まらないので、`total` という名前の系列でも `aggregation` は省略できません（`source: barra` だけは `series` の書き方が異なります。[source: barra のリターン](#source-barra-のリターン)）。
+
+**古い config からの移行**: 系列の `kind` は廃止しました。`kind: total` は `aggregation: cumprod` に、`kind: specific` は `aggregation: cumsum` に書き換えます。
+metric の `aggregation.cumulative` のキーは系列名になり、指定は書いた系列だけに効きます。同じ方法にしたい系列が複数あれば、系列ごとに書きます。値の `compound` は `cumprod` に、`sum` は `cumsum` に書き換えます。
+`source: barra` の `series`（`{total: total, specific: specific}` の形）は、そのまま使えます。
 
 **convention**: 行 t の値が「行 t−1 から行 t まで」のリターンなら `realized`、「行 t から行 t+1 まで」のリターンなら `forward` と書きます。
 取り違えると、シグナルに対応させるリターンが1行ずれます（先読み、または1行の遅れ）。定義は [02 の 4.3](02_features.md#43-conventionrealized--forward) にあります。
@@ -489,8 +506,8 @@ returns:
     convention: realized
     columns: {asset_id: nri_code}
     series:
-      total:    {column: ret,  kind: total}
-      specific: {column: sret, kind: specific}
+      total:    {column: ret,  aggregation: cumprod}
+      specific: {column: sret, aggregation: cumsum}
 ```
 
 リターンは、評価期間の1行前から、評価期間の末尾の最大ホライズン行先まで読みます。評価期間の外にあたる行のファイルは、なくてもエラーにならず、その行が欠損になります
@@ -515,7 +532,7 @@ returns:
 | `convention` | `realized` / `forward` | `realized` | 上記と同じ |
 | `currency` | `local` / `USD` | `local` | トータルリターンの通貨。`USD` なら日次で為替を掛けて USD 建てにします。スペシフィックリターンには影響しません |
 | `asset_id` | `nri_code` / `bid` | `JPE4` は `nri_code`、`GEMLT` と `GEM3` は `bid` | 結果の銘柄コードを nri_code にするか、BID のままにするか（下の説明を参照） |
-| `series` | `{系列名: kind}` | `{total: total, specific: specific}` | 読む系列。kind だけを書きます（列名は選べません） |
+| `series` | `{系列名: total または specific}` | `{total: total, specific: specific}` | 読む系列。値で Barra のデータを選びます（列名と `aggregation` は選べません） |
 | `valid_range` | `[下限, 上限]` | `[-1, 10]` | 上記と同じ。小数への換算（USD 換算を含む）の後の日次の値を検査します |
 
 ```yaml
@@ -527,13 +544,14 @@ returns:
     series: {total: total, specific: specific}
 ```
 
-- `total` は Barra の日次トータルリターンの列（DRTN）、`specific` は日次スペシフィックリターンの列（SRTN）を読み、% を小数に換算します。
+- `series` の値が `total` の系列は Barra の日次トータルリターン（DRTN）を読み、`cumprod` で束ねます。値が `specific` の系列は日次スペシフィックリターン（SRTN）を読み、`cumsum` で束ねます。どちらも % を小数に換算します。
+- 系列名は自由に付けられます（例: `series: {jp_total: total, jp_specific: specific}`）。
 - `asset_id: nri_code` は BID を nri_code に変換し、対応のない銘柄は捨てます。`asset_id: bid` は BID のまま使い、シグナルのある銘柄だけを取得します。シグナルの銘柄コードと同じ体系になるほうを選びます。
 - 接続先 `risk_models` と `fs_trfac_glb` の環境変数が必要です（`asset_id: bid` なら `risk_models` だけ）。
 
 ### 期間集約のルール
 
-`db` と `barra` のリターンは日次で取得し、`match_on` の列を期間の境界として、カレンダーの1行ごとのリターンに集約します（`file` のリターンは集約しません。集約の規則は config では変えられません）。
+`db` と `barra` のリターンは日次で取得し、`match_on` の列を期間の境界として、カレンダーの1行ごとのリターンに集約します（`file` のリターンは集約しません）。
 行 t の1期間は、`realized` なら「前の行の境界日の翌日から、行 t の境界日まで」、`forward` なら「行 t の境界日から、次の行の境界日の前日まで」です。
 境界日は、日付の列ではその日付、月の列ではその月の月末日で、月が1か月ずつ進まないカレンダーでも同じ規則です。
 例と詳しい説明は次の場所にあります。
@@ -541,13 +559,22 @@ returns:
 | 知りたいこと | 説明している場所 |
 |---|---|
 | 1期間がどの日からどの日までか（`match_on` が日付の列の場合と月の列の場合、`realized` と `forward`） | [02 の 4.5](02_features.md#45-日次データの期間集約db--barra) |
-| 束ね方（`total` は複利、`specific` とリスクモデルのファクターリターンは加算） | [02 の 4.4](02_features.md#44-フォワードリターンの定義) と [4.5](02_features.md#45-日次データの期間集約db--barra) |
+| 束ね方（各系列の `aggregation`。リスクモデルのファクターリターンは常に加算） | [02 の 4.4](02_features.md#44-フォワードリターンの定義) と [4.5](02_features.md#45-日次データの期間集約db--barra) |
 | 行 t のシグナルに、どの行のリターンを対応させるか | [02 の 4.3](02_features.md#43-conventionrealized--forward) |
 | 欠損の扱い（リターンを 0 で埋めない） | [02 の 4.8](02_features.md#48-欠損の扱い) |
 
 config を書くうえでの制約は1つです。`match_on` の列は期間の境界に使うので、リターンを読む範囲の行で、重複がなく昇順でなければなりません（検証で確認されます）。
 
-metric のパラメータにある `aggregation.cumulative` は、metric が出力する累積リターン系列の計算方法で、ここで述べた集約とは別のものです（[04 の 1.3](04_metrics.md#13-リターンの集計規約-aggregation)）。
+metric のパラメータにある `aggregation.cumulative` は、`quantile`、`category_quantile`、`category_returns` が出力する累積リターンの表の計算方法を、系列ごとに変える設定です（[04 の 1.3](04_metrics.md#13-リターンの集計規約-aggregation)）。
+キーは `returns` で定義した系列名、値は `cumprod` か `cumsum` です。書かなかった系列は、その系列の `aggregation` で累積します。変わるのは累積リターンの表だけで、期間への集約とフォワードリターンは変わりません。
+
+```yaml
+metrics:
+  - name: quantile
+    params:
+      aggregation:
+        cumulative: {specific: cumprod}   # 系列 specific の累積だけを複利にする
+```
 
 ## 7. risk_models
 
@@ -823,12 +850,14 @@ Python API では、`validate(config, check_files=False)` が `--skip-files` に
 | 同じ metric を `id` なしで2回書いた | （位置の表示なし） | ``Value error, Duplicate metric keys: ['quantile']. Set a unique `id` when using the same metric twice`` |
 | リターンの系列名の重複 | （位置の表示なし） | `Value error, Duplicate return series names across sources: ['specific', 'total']` |
 | `specific_return` が未定義の系列を指している | （位置の表示なし） | `Value error, risk_models.m.specific_return refers to unknown return series 'spec'. Defined series: ['total', 'specific']` |
-| `kind` の値が違う | `returns.0.file.series.specific.kind` | `Input should be 'total' or 'specific'` |
+| 廃止した `kind` を系列に書いた（[移行の方法](#returns-のソースに共通のキー-series--aggregation--convention--valid_range)） | `returns.0.file.series.total` | ``Value error, `kind` was replaced by `aggregation`: write `aggregation: cumprod` (was kind: total) or `aggregation: cumsum` (was kind: specific)`` |
+| 系列の `aggregation` の値が違う | `returns.0.file.series.total.aggregation` | `Input should be 'cumprod' or 'cumsum'` |
+| 系列に `aggregation` がない | `returns.0.file.series.total.aggregation` | `Field required` |
 | `convention` の値が違う | `returns.0.file.convention` | `Input should be 'realized' or 'forward'` |
 | `valid_range` の下限が -1 未満 | `returns.0.file.valid_range` | `Value error, valid_range lower bound must be >= -1 (-100%), got -2.0` |
 | `valid_range` の下限が上限以上 | `returns.0.file.valid_range` | `Value error, valid_range lower bound must be below the upper bound, got (1.0, 0.5)` |
 | DB のリターンに `match_on` がない | `returns.0.db.match_on` | `Field required` |
-| Barra の `series` に列名を書いた | `returns.0.barra` | ``Value error, series ['total']: write the kind only (e.g. `total: total`); Barra sources have no column names to choose`` |
+| Barra の `series` で列名や `aggregation` を変えようとした（例: `total: {column: DRTN, aggregation: cumprod}`）、または値が `total` / `specific` 以外の文字列 | `returns.0.barra.series` | ``Value error, series 'total': write the Barra return type only (`total` or `specific`); Barra sources have no column or aggregation to choose`` |
 | Barra の `model` が違う | `returns.0.barra.model` | `Input should be 'JPE4', 'GEMLT' or 'GEM3'` |
 | `n_jobs` が 0 以下 | `execution.n_jobs` | `Input should be greater than or equal to 1` |
 | `formats` の値が違う | `output.formats.0` | `Input should be 'parquet', 'xlsx' or 'csv'` |
@@ -864,6 +893,8 @@ YAML として読めないファイルと、トップレベルがマッピング
 | metric のパラメータの値が違う | `metrics[ic].params.method: Input should be 'spearman' or 'pearson'` |
 | metric が未定義のシグナルを指している | `metrics[ic]: unknown signals ['xx']; available: ['ai', 'dss']` |
 | metric が未定義のリターン系列を指している | `metrics[ic]: unknown return series ['specific']; available: ['total']` |
+| `aggregation.cumulative` のキーが未定義の系列名 | `metrics[quantile]: aggregation.cumulative: unknown return series ['specific']; available: ['total']` |
+| `aggregation.cumulative` の値が違う | `metrics[quantile].params.aggregation.cumulative.total: Input should be 'cumprod' or 'cumsum'` |
 | metric の `horizons` がトップレベルにない | `metrics[ic]: horizons [12] are not in the configured horizons [1, 3, 6]` |
 | metric に必要なデータが config にない | `metrics[category_ic]: requires data that is not configured: ['classification']` |
 | metric が未定義のリスクモデルを指している | `metrics[factor_correlation]: unknown risk_model 'barra'; available: []` |

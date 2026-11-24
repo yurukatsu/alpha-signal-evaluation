@@ -29,13 +29,10 @@ from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from ..config import AGGREGATION_BY_KIND, Aggregation, ReturnKind
+from ..config import Aggregation
 from ..data.bundle import REQUIREMENTS, DataBundle, DataSpec
-
-# 期間をまたぐ累積のデフォルト（kind ごとの束ね方と同じ）。params で変更できる
-CUMULATIVE_DEFAULT: dict[ReturnKind, Aggregation] = dict(AGGREGATION_BY_KIND)
 
 
 class MetricParams(BaseModel):
@@ -76,59 +73,60 @@ class ReturnAggregation(BaseModel):
 
     - サマリー統計は算術平均と幾何平均の両方を出す（選択させない）。
       → :meth:`summarize`
-    - 累積リターン系列は kind（``total`` / ``specific``）ごとに ``compound``（複利）/
-      ``sum``（単純加算）を選べる。指定しなかった kind はデフォルト
-      （total → compound、specific → sum）を維持する。 → :meth:`cumulate`
+    - 累積リターン系列は、既定ではリターン系列の ``aggregation``（config の
+      ``returns[].series.<系列名>.aggregation``）で計算する。metric ごとに系列名を指定して
+      ``cumprod``（複利）/ ``cumsum``（単純加算）に変えられる。 → :meth:`method_for`、
+      :meth:`cumulate`
 
-    config では metric の params の下に ``aggregation: {cumulative: {specific: compound}}``
-    のように書く。未知のキーはエラー、生成後は変更不可。
+    config では metric の params の下に ``aggregation: {cumulative: {specific: cumprod}}``
+    （``specific`` はリターン系列名）のように書く。未知のキーはエラー、生成後は変更不可。
+    定義されていない系列名は ``Metric.check`` が計算前にエラーにする。
 
     Attributes:
-        cumulative: kind → 累積方法（``"compound"`` または ``"sum"``）の辞書。
-            デフォルトは :data:`CUMULATIVE_DEFAULT`（``{"total": "compound",
-            "specific": "sum"}``）。一部の kind だけを渡すと残りはデフォルトで補われる。
+        cumulative: リターン系列名 → 累積方法（``"cumprod"`` または ``"cumsum"``）の辞書。
+            デフォルトは空（すべての系列で、系列の ``aggregation`` を使う）。
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    cumulative: dict[ReturnKind, Aggregation] = Field(
-        default_factory=lambda: dict(CUMULATIVE_DEFAULT)
-    )
+    cumulative: dict[str, Aggregation] = Field(default_factory=dict)
 
-    @field_validator("cumulative", mode="before")
-    @classmethod
-    def _merge_defaults(cls, v: Any) -> Any:
-        """部分的に指定された ``cumulative`` を :data:`CUMULATIVE_DEFAULT` で補完する。
+    def method_for(self, series: str, default: Aggregation) -> Aggregation:
+        """リターン系列の累積方法を返す。
 
         Args:
-            v: 入力値。Mapping ならデフォルトの上に上書きマージする。それ以外は
-                そのまま返し、pydantic の型検証に任せる。
+            series: リターン系列名。
+            default: 系列の束ね方（``data.return_aggregations[series]``）。
 
         Returns:
-            デフォルトとマージした辞書、または入力値そのもの。
+            ``cumulative`` に指定があればその方法、なければ ``default``。
         """
-        if isinstance(v, Mapping):
-            return {**CUMULATIVE_DEFAULT, **v}
-        return v
+        return self.cumulative.get(series, default)
 
-    def cumulate(self, returns: pd.Series | pd.DataFrame, kind: ReturnKind):
+    @staticmethod
+    def cumulate(returns: pd.Series | pd.DataFrame, method: Aggregation):
         """1期間リターンの系列から累積リターン系列を作る。
 
-        ``cumulative[kind]`` が ``"compound"`` なら ``(1 + r).cumprod() - 1``、``"sum"`` なら
+        ``method`` が ``"cumprod"`` なら ``(1 + r).cumprod() - 1``、``"cumsum"`` なら
         ``r.cumsum()``。欠損の期間は欠損のまま残し、累積は前後の期間をつないで続ける
         （pandas の skipna 挙動）。重複のある h > 1 のリターンに使うのは不適切。
 
         Args:
             returns: 1期間リターン。Series（index=date）または DataFrame
                 （index=date、columns=ポートフォリオ等）。列ごとに独立して累積する。
-            kind: リターンの種類（``"total"`` / ``"specific"``）。累積方法の選択に使う。
+            method: 累積方法（通常は :meth:`method_for` の戻り値）。
 
         Returns:
             入力と同じ形（index・columns）の累積リターン。
+
+        Raises:
+            ValueError: ``method`` が ``"cumprod"`` / ``"cumsum"`` 以外の場合。
         """
-        if self.cumulative[kind] == "compound":
+        if method == "cumprod":
             return (1 + returns).cumprod() - 1
-        return returns.cumsum()
+        if method == "cumsum":
+            return returns.cumsum()
+        raise ValueError(f"Unknown aggregation {method!r}; expected 'cumprod' or 'cumsum'")
 
     @staticmethod
     def summarize(returns: pd.Series) -> dict[str, float]:
@@ -284,6 +282,7 @@ class Metric(ABC):
             - ``requires`` のデータが config で用意されているか
             - ``params.signals`` が config のシグナルに存在するか
             - ``params.returns`` が定義済みのリターン系列に存在するか
+            - ``params.aggregation.cumulative`` のキーが定義済みのリターン系列に存在するか
             - ``params.horizons`` が config のホライズンに含まれるか
             - ``params.risk_model`` が定義済みのリスクモデルに存在するか
 
@@ -307,9 +306,18 @@ class Metric(ABC):
         if signals is not None and (unknown := set(signals) - set(spec.signals)):
             errors.append(f"unknown signals {sorted(unknown)}; available: {list(spec.signals)}")
         returns = getattr(params, "returns", None)
-        if returns is not None and (unknown := set(returns) - set(spec.return_kinds)):
+        if returns is not None and (unknown := set(returns) - set(spec.return_aggregations)):
             errors.append(
-                f"unknown return series {sorted(unknown)}; available: {list(spec.return_kinds)}"
+                f"unknown return series {sorted(unknown)}; "
+                f"available: {list(spec.return_aggregations)}"
+            )
+        aggregation = getattr(params, "aggregation", None)
+        if isinstance(aggregation, ReturnAggregation) and (
+            unknown := set(aggregation.cumulative) - set(spec.return_aggregations)
+        ):
+            errors.append(
+                f"aggregation.cumulative: unknown return series {sorted(unknown)}; "
+                f"available: {list(spec.return_aggregations)}"
             )
         horizons = getattr(params, "horizons", None)
         if horizons is not None and (unknown := set(horizons) - set(spec.horizons)):

@@ -35,8 +35,8 @@ class QuantileParams(SignalReturnParams):
             揃っている銘柄）の等ウェイト平均を差し引いた超過リターンで集計する。
             デフォルト ``False``。
         aggregation: 期間をまたぐ集計の規約（:class:`~.base.ReturnAggregation`）。
-            累積リターンの方法を kind ごとに指定できる
-            （デフォルト: total → compound、specific → sum）。
+            累積リターンの方法をリターン系列ごとに指定できる
+            （デフォルト: 系列の ``aggregation``）。
     """
 
     n_quantiles: int = Field(default=5, ge=2)
@@ -62,8 +62,8 @@ class QuantilePerformance(Metric):
        （:meth:`~.base.ReturnAggregation.summarize`）。spread には lag = horizon − 1 の
        Newey-West t 値と、spread が正の期間の割合も求める。
     6. ホライズン 1 のときだけ（h > 1 は期間が重複するため）累積リターン系列を作る。
-       累積方法はリターンの kind（``total`` / ``specific``）ごとに ``aggregation`` で決まる
-       （デフォルト: total は複利、specific は単純加算）。spread 列も同じ方法で累積する。
+       累積方法はリターン系列の ``aggregation``（``cumprod`` / ``cumsum``）で決まり、params の
+       ``aggregation.cumulative`` で系列ごとに変えられる。spread 列も同じ方法で累積する。
 
     パラメータは :class:`QuantileParams` を参照。
 
@@ -91,8 +91,8 @@ class QuantilePerformance(Metric):
         """全ての (signal, returns, horizon) の組について分位ポートフォリオを評価する。
 
         Args:
-            data: pipeline が用意した時点合わせ済みのデータ。``data.return_kinds`` から
-                各リターン系列の kind を取り、累積方法の選択に使う。
+            data: pipeline が用意した時点合わせ済みのデータ。``data.return_aggregations`` から
+                各リターン系列の束ね方を取り、累積方法の選択に使う。
 
         Returns:
             ``returns`` / ``cumulative`` / ``summary`` の表、spread の要約の summary、
@@ -104,7 +104,7 @@ class QuantilePerformance(Metric):
         returns_rows, cumulative_rows, summary = [], [], []
         for signal in data.resolve_signals(p.signals):
             for ret in data.resolve_returns(p.returns):
-                kind = data.return_kinds[ret]
+                method = p.aggregation.method_for(ret, data.return_aggregations[ret])
                 for h in data.resolve_horizons(p.horizons):
                     df = data.aligned(signal, ret, h)
                     if p.demean:
@@ -120,7 +120,7 @@ class QuantilePerformance(Metric):
                     ]
                     # 重複のない1期間ホライズンだけ累積リターンを出す
                     if h == 1:
-                        cum = cumulative_portfolios(wide, kind, p.aggregation)
+                        cum = cumulative_portfolios(wide, method)
                         cumulative_rows.append(cum.assign(signal=signal, returns=ret))
 
         summary = pd.DataFrame(summary)
@@ -139,7 +139,8 @@ class QuantilePerformance(Metric):
             notes=[
                 f"Q1 = lowest signal, Q{n} = highest; spread = Q{n} - Q1 (equal-weighted).",
                 "Cumulative returns are shown for horizon 1 only (longer horizons overlap).",
-                "Differences between total (compounded) and specific (summed) cumulative returns "
-                "do not exactly equal the factor contribution.",
+                "Cumulative returns use each series' aggregation (cumprod or cumsum) unless "
+                "overridden; differences between series accumulated differently do not exactly "
+                "equal a factor contribution.",
             ],
         )

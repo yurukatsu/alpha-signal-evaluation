@@ -20,10 +20,11 @@ metrics はここにあるデータを結合・集計するだけで、時点を
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field, replace
+from typing import get_args
 
 import pandas as pd
 
-from ..config import ReturnKind
+from ..config import Aggregation
 from .columns import ASSET_ID, DATE
 
 RISK_MODEL_COMPONENTS = frozenset(
@@ -131,14 +132,14 @@ class DataSpec:
     Attributes:
         provides: 利用可能なデータ名の集合（``REQUIREMENTS`` の部分集合）。
         signals: シグナル名。
-        return_kinds: リターン系列名 -> 種類（``total`` / ``specific``）。
+        return_aggregations: リターン系列名 -> 束ね方（``cumprod`` / ``cumsum``）。
         horizons: 利用可能なホライズン（カレンダー行数）。
         risk_models: リスクモデル名 -> 揃っている構成要素名の集合。
     """
 
     provides: frozenset[str]
     signals: tuple[str, ...] = ()
-    return_kinds: Mapping[str, ReturnKind] = field(default_factory=dict)
+    return_aggregations: Mapping[str, Aggregation] = field(default_factory=dict)
     horizons: tuple[int, ...] = ()
     risk_models: Mapping[str, frozenset[str]] = field(default_factory=dict)
 
@@ -161,7 +162,7 @@ class DataBundle:
     カレンダーの ``index`` 列（通常 Base_day）の文字列キー。
 
     生成時に、signals の index 名が ``(date, asset_id)`` であること、forward_returns の
-    全系列に return_kinds が定義されていることを検証する。``dates`` を省略した場合は
+    全系列に return_aggregations が定義されていることを検証する。``dates`` を省略した場合は
     signals に現れる日付（重複除去・昇順）で補う。
 
     Attributes:
@@ -169,8 +170,8 @@ class DataBundle:
         forward_returns: 系列名 -> ホライズン（カレンダー行数） -> フォワードリターン
             （index=date、columns=asset_id の wide 形式）。行 t の値は、行 t のシグナルに
             対応する h 期先までの累積リターン（pipeline で時点合わせ済み）。
-            期間をまたぐ集約は ``total`` が複利、``specific`` が加算。
-        return_kinds: 系列名 -> リターンの種類（``total`` / ``specific``）。
+            期間をまたぐ集約は系列ごとの ``return_aggregations`` に従う。
+        return_aggregations: 系列名 -> 束ね方（``cumprod`` = 複利、``cumsum`` = 加算）。
             forward_returns のすべての系列について必要。
         classification: 銘柄の分類。index=(date, asset_id)、columns=[category, ...]。
             未設定なら ``None``。
@@ -183,12 +184,12 @@ class DataBundle:
 
     Raises:
         ValueError: signals の index 名が ``(date, asset_id)`` でない場合、または
-            forward_returns に return_kinds のない系列がある場合（生成時）。
+            forward_returns に return_aggregations のない系列がある場合（生成時）。
     """
 
     signals: pd.DataFrame  # index=(date, asset_id), columns=シグナル名
     forward_returns: dict[str, dict[int, pd.DataFrame]] = field(default_factory=dict)
-    return_kinds: dict[str, ReturnKind] = field(default_factory=dict)
+    return_aggregations: dict[str, Aggregation] = field(default_factory=dict)
     classification: pd.DataFrame | None = None  # index=(date, asset_id), columns=[category, ...]
     risk_models: dict[str, RiskModelData] = field(default_factory=dict)
     benchmark_weights: pd.DataFrame | None = None  # index=(date, asset_id), columns=[weight]
@@ -197,19 +198,28 @@ class DataBundle:
     dates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
-        """index 名と return_kinds を検証し、``dates`` が空なら signals の日付で補う。
+        """index 名と return_aggregations を検証し、``dates`` が空なら signals の日付で補う。
 
         Raises:
-            ValueError: signals の index 名が ``(date, asset_id)`` でない場合、または
-                forward_returns のキーのうち return_kinds にないものがある場合。
+            ValueError: signals の index 名が ``(date, asset_id)`` でない場合、
+                forward_returns のキーのうち return_aggregations にないものがある場合、
+                または return_aggregations の値が ``cumprod`` / ``cumsum`` でない場合。
         """
         if list(self.signals.index.names) != [DATE, ASSET_ID]:
             raise ValueError(
                 f"signals index must be ({DATE}, {ASSET_ID}), got {self.signals.index.names}"
             )
-        missing = set(self.forward_returns) - set(self.return_kinds)
+        missing = set(self.forward_returns) - set(self.return_aggregations)
         if missing:
-            raise ValueError(f"return_kinds is missing for series: {sorted(missing)}")
+            raise ValueError(f"return_aggregations is missing for series: {sorted(missing)}")
+        invalid = {
+            k: v for k, v in self.return_aggregations.items() if v not in get_args(Aggregation)
+        }
+        if invalid:
+            raise ValueError(
+                f"return_aggregations must be 'cumprod' or 'cumsum', got {invalid} "
+                "(the old kinds map as total -> cumprod, specific -> cumsum)"
+            )
         if not self.dates:
             dates = self.signals.index.get_level_values(DATE).unique().sort_values()
             object.__setattr__(self, "dates", tuple(dates))
@@ -259,7 +269,7 @@ class DataBundle:
         return DataSpec(
             provides=frozenset(provides),
             signals=tuple(self.signal_names),
-            return_kinds=dict(self.return_kinds),
+            return_aggregations=dict(self.return_aggregations),
             horizons=tuple(self.horizons),
             risk_models={n: m.components for n, m in self.risk_models.items()},
         )
@@ -269,8 +279,8 @@ class DataBundle:
 
         metric が ``requires`` で宣言したデータだけで計算できることを確かめるために使う。
         要求されないデータは、signals なら列のない空の DataFrame、forward_returns・
-        return_kinds・portfolio_weights なら空の辞書、classification・benchmark_weights なら
-        ``None`` に置き換える。return_kinds は ``forward_returns`` を要求したときだけ残す。
+        return_aggregations・portfolio_weights なら空の辞書、classification・benchmark_weights なら
+        ``None`` に置き換える。return_aggregations は ``forward_returns`` を要求したときだけ残す。
         ``dates`` は常に元の値を引き継ぐ。
 
         リスクモデルは、``risk_models`` を要求すればそのまま残し、``risk_models.<構成要素名>``
@@ -303,7 +313,7 @@ class DataBundle:
         return DataBundle(
             signals=self.signals if "signals" in requires else _empty_signals(),
             forward_returns=self.forward_returns if has_returns else {},
-            return_kinds=self.return_kinds if has_returns else {},
+            return_aggregations=self.return_aggregations if has_returns else {},
             classification=self.classification if "classification" in requires else None,
             risk_models=risk_models,
             benchmark_weights=(self.benchmark_weights if "benchmark_weights" in requires else None),

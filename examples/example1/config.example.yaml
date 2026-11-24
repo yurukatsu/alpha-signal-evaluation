@@ -44,8 +44,8 @@ returns:
     convention: realized
     columns: {asset_id: nri_code}
     series:
-      total:    {column: ret,  kind: total}
-      specific: {column: sret, kind: specific}
+      total:    {column: ret,  aggregation: cumprod}
+      specific: {column: sret, aggregation: cumsum}
   # 本番: DB から日次で取得して Trading_day の区間に集約する（接続先は io/db/config.py で定義）
   # - source: db
   #   connection: risk_models
@@ -53,8 +53,8 @@ returns:
   #   match_on: Trading_day
   #   columns: {date: dt, asset_id: code}
   #   series:
-  #     total:    {column: ret,  kind: total}
-  #     specific: {column: sret, kind: specific}
+  #     total:    {column: ret,  aggregation: cumprod}
+  #     specific: {column: sret, aggregation: cumsum}
   # 本番（Barra）: 社内 DB の Barra の日次リターン（DRTN / SRTN）を Trading_day の区間に集約する。
   # SQL は不要。% は小数に、銘柄 ID は BID → nri_code（barraid_jp）に変換される（JPE4 の既定）。
   # .env に接続先 risk_models と fs_trfac_glb の設定が必要。
@@ -64,7 +64,7 @@ returns:
   #   match_on: Trading_day        # 期間の境界（前行の Trading_day の翌日〜当該行の Trading_day）
   #   convention: realized
   #   currency: local              # USD ならトータルリターンを日次で USD 建てにする
-  #   series: {total: total, specific: specific}   # 系列名: kind（省略時もこの2系列）
+  #   series: {total: total, specific: specific}   # 系列名: Barra の種類（total = DRTN、specific = SRTN。省略時もこの2系列）
 
 metrics:
   - name: ic

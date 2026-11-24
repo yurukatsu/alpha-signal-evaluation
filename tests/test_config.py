@@ -26,8 +26,8 @@ MINIMAL = {
             "match_on": "Trading_day",
             "columns": {"date": "dt", "asset_id": "code"},
             "series": {
-                "total": {"column": "ret", "kind": "total"},
-                "specific": {"column": "sret", "kind": "specific"},
+                "total": {"column": "ret", "aggregation": "cumprod"},
+                "specific": {"column": "sret", "aggregation": "cumsum"},
             },
         }
     ],
@@ -42,7 +42,7 @@ def _with(**overrides):
 def test_minimal_config():
     cfg = EvaluationConfig.model_validate(MINIMAL)
     assert cfg.data.signal_names == ["value"]
-    assert cfg.return_kinds == {"total": "total", "specific": "specific"}
+    assert cfg.return_aggregations == {"total": "cumprod", "specific": "cumsum"}
     assert cfg.horizons == [1]
     assert cfg.returns[0].convention == "realized"
 
@@ -172,12 +172,46 @@ def test_absolute_paths_are_kept(tmp_path: Path):
     assert load_config(path).calendar.path == "/data/calendar.tsv"
 
 
-def test_return_aggregation_merges_defaults():
-    agg = ReturnAggregation.model_validate({"cumulative": {"specific": "compound"}})
-    assert agg.cumulative == {"total": "compound", "specific": "compound"}
-    assert ReturnAggregation().cumulative == {"total": "compound", "specific": "sum"}
+def test_return_aggregation_overrides_by_series_name():
+    """累積方法は系列の aggregation が既定で、metric から系列名を指定して変えられる。"""
+    agg = ReturnAggregation.model_validate({"cumulative": {"excess": "cumprod"}})
+    assert agg.method_for("excess", "cumsum") == "cumprod"
+    assert agg.method_for("total", "cumprod") == "cumprod"
+    assert agg.method_for("specific", "cumsum") == "cumsum"
+    assert ReturnAggregation().cumulative == {}
     with pytest.raises(ValidationError):
         ReturnAggregation.model_validate({"cumulative": {"specific": "log"}})
+
+
+def test_return_series_can_have_any_name():
+    """total / specific 以外の系列も、aggregation を書けば定義できる。"""
+    returns = [
+        {
+            "source": "file",
+            "path": "returns/{Base_day}.csv",
+            "columns": {"asset_id": "code"},
+            "series": {
+                "excess": {"column": "xret", "aggregation": "cumsum"},
+                "usd_total": {"column": "uret", "aggregation": "cumprod"},
+            },
+        }
+    ]
+    cfg = EvaluationConfig.model_validate(_with(returns=returns))
+    assert cfg.return_aggregations == {"excess": "cumsum", "usd_total": "cumprod"}
+
+
+@pytest.mark.parametrize("kind", ["total", "specific"])
+def test_removed_kind_key_tells_how_to_rewrite(kind):
+    returns = [
+        {
+            "source": "file",
+            "path": "returns/{Base_day}.csv",
+            "columns": {"asset_id": "code"},
+            "series": {"r": {"column": "ret", "kind": kind}},
+        }
+    ]
+    with pytest.raises(ValidationError, match="`kind` was replaced by `aggregation`"):
+        EvaluationConfig.model_validate(_with(returns=returns))
 
 
 def test_full_reference_config_is_valid():
@@ -199,7 +233,7 @@ def test_valid_range_is_checked():
                 {
                     "source": "file",
                     "path": "r.csv",
-                    "series": {"total": {"column": "r", "kind": "total"}},
+                    "series": {"total": {"column": "r", "aggregation": "cumprod"}},
                     **kw,
                 }
             ],
@@ -238,3 +272,18 @@ def test_metric_keys_differing_only_in_case_are_rejected():
 def test_by_date_is_reserved_as_a_metric_key(key):
     with pytest.raises(ValidationError, match="reserved for output directories"):
         EvaluationConfig.model_validate(_with(metrics=[{"name": "ic", "id": key}]))
+
+
+@pytest.mark.parametrize("old", ["compound", "sum"])
+def test_old_cumulative_method_names_are_rejected(old):
+    """累積方法の名前は pandas に合わせて cumprod / cumsum にした。"""
+    with pytest.raises(ValidationError, match="'cumprod' or 'cumsum'"):
+        ReturnAggregation.model_validate({"cumulative": {"specific": old}})
+
+
+@pytest.mark.parametrize("value", [["total"], {"column": ["total"]}, 5, "drtn"])
+def test_invalid_barra_series_is_a_validation_error(value):
+    """リストなどを書いても TypeError で落ちず、検証エラーになる。"""
+    source = {"source": "barra", "model": "JPE4", "match_on": "Trading_day", "series": {"t": value}}
+    with pytest.raises(ValidationError, match="Barra return type only"):
+        EvaluationConfig.model_validate(_with(returns=[source]))

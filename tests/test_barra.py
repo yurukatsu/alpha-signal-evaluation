@@ -375,9 +375,11 @@ def test_resolve_asof():
 def test_config_rejects_unknown_model_and_column_names(world):
     with pytest.raises(ValidationError, match="JPE4"):
         EvaluationConfig.model_validate(world.config(returns=[returns_source(model="JPE5")]))
-    with pytest.raises(ValidationError, match="kind only"):
+    with pytest.raises(ValidationError, match="Barra return type only"):
         EvaluationConfig.model_validate(
-            world.config(returns=[returns_source(series={"t": {"column": "x", "kind": "total"}})])
+            world.config(
+                returns=[returns_source(series={"t": {"column": "x", "aggregation": "cumprod"}})]
+            )
         )
     with pytest.raises(ValidationError, match="components"):
         EvaluationConfig.model_validate(

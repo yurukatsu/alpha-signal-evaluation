@@ -71,6 +71,8 @@
      別のデータ（エクスポージャーやベンチマークウェイトなど）で代用したコードを勝手に書いては
      いけません。代用は案として挙げるだけにします。
    - 既存の metric とそのパラメータの組み合わせで実現できる（下の「既存の metric」を参照）。
+     実現できるとは、出力の値をそのまま読むか、同じ表の値どうしの単純な差で求まる場合に限ります。
+     日付の集計や `per_period_rate` のような換算を追加で行う必要があれば、新しい metric を書きます。
      依頼の解釈によって実現できるかどうかが変わる場合も、最も自然な解釈で実現できるならこの連絡に
      します。そのとき、新しい metric が必要になる別の解釈を挙げて、どれに当たるかを尋ねてください。
 2. 質問する場合。決め方によって計算結果が変わり、かつ下の「既定の決め方」でも決まらない点が
@@ -172,7 +174,7 @@ metrics:
 | `data.resolve_signals(p.signals)` | パラメータが None なら全シグナル名、指定があればそのリスト |
 | `data.resolve_returns(p.returns)` | 同上（リターン系列名。例: ["total", "specific"]） |
 | `data.resolve_horizons(p.horizons)` | 同上（ホライズン。昇順の list[int]） |
-| `data.return_kinds[returns]` | そのリターン系列の種類。"total" または "specific" |
+| `data.return_aggregations[returns]` | そのリターン系列の束ね方。"cumprod"（複利）または "cumsum"（加算）。期間集約、フォワードリターン、1期間あたりへの換算に使われ、累積リターンの既定にもなる |
 | `data.forward_returns[returns][horizon]` | フォワードリターンの wide 形式。index=date、columns=asset_id（通常は aligned を使う） |
 | `data.classification` | 銘柄の分類。index=(date, asset_id)、columns=["category", ...]（config の分類ソースにある他の列も、元の列名のまま入る）。設定がなければ None |
 | `data.benchmark_weights` | ベンチマークウェイト。index=(date, asset_id)（一意。日付は `data.dates` の範囲内）、columns=["weight"]。ソースの値のままで、ユニバースでは絞られない（シグナルのない銘柄の行も含む）。日付ごとの合計が 1 とは限らず、0・欠損・負の値も検証されずに入りうる。設定がなければ None |
@@ -193,8 +195,10 @@ RiskModelData の属性（どれも、設定されていなければ None また
 ファクター名は config ごとに違います。特定のファクター名をコードや既定値に決め打ちせず、
 `model.factors(group)` で取得するか、パラメータで受け取ってください。
 
-リターンの種類（kind）は "total" と "specific" の2つです。期間をまたいで束ねるとき、total は複利、
-specific は加算です。specific を「residual」とは呼びません。
+リターン系列の名前は config で自由に付けられ（例: total、specific、excess、usd_total）、名前は計算方法を
+表しません。系列名で処理を分岐させず、束ね方は `data.return_aggregations[returns]` から取得してください
+（累積リターンの方法だけは、利用者の指定を反映する `p.aggregation.method_for` で取得します。後述）。
+スペシフィックリターンを「residual」とは呼びません。
 
 データの種類は metric の側からは増やせません。新しい種類のデータは、ライブラリの読み込み側への
 追加が必要です。そうしたデータが必要な依頼では、コードを書かずに、必要なデータの形を伝えてください。
@@ -250,7 +254,8 @@ metric クラス:
   @classmethod
   def check(cls, params, spec) -> list[str]:
       errors = super().check(params, spec)
-      # spec.signals / spec.return_kinds / spec.horizons で名前の実在を確認できる。
+      # spec.signals / spec.return_aggregations / spec.horizons で名前の実在を確認できる。
+      # spec.return_aggregations は「リターン系列名 → "cumprod" / "cumsum"」
       # spec.risk_models は「リスクモデル名 → 揃っている構成要素名の集合」（例: {"exposures"}）
       if ...:
           errors.append("エラーメッセージ（英語）")
@@ -277,11 +282,11 @@ metric クラス:
   - 下限未満などで値を欠損にした行でも、銘柄数の列（`n`）は残します。`n` は母集団（分母）の銘柄数で、
     該当銘柄数など別の件数は `n_<内容>`（例: `n_covered`）の列にします。reindex で足した行の `n` は
     欠損のままで構いません。
-- リターンの時系列を要約する表の列は [キーの列..., arith_mean, geo_mean, t_stat, hit_rate, n_periods]
-  とし、summary の dict には arith_mean / geo_mean / t_stat を入れます。相関などリターン以外の量は
-  `<統計量>_<量>` の形（`mean_ic`、`std_ic`、`min_coverage` など）にし、summary には `mean_<量>` と、
-  意味があれば `t_stat` を入れます。t 値や hit_rate は、依頼にあるか 0 との比較に意味がある量のときだけ
-  出します。
+- リターンの時系列を要約する表の列は [キーの列..., arith_mean, geo_mean, n_periods] を基本とし、t_stat と
+  hit_rate は、依頼にあるか 0 との比較に意味がある量（スプレッド、超過リターンなど）のときだけ n_periods の
+  前に足します。summary の dict には arith_mean / geo_mean と、出した場合は t_stat を入れます。相関など
+  リターン以外の量は `<統計量>_<量>` の形（`mean_ic`、`std_ic`、`min_coverage` など）にし、summary には
+  `mean_<量>` と、出した場合は `t_stat` を入れます。
 - 累積リターンの表は `tables["cumulative"]` とし、columns=[date, (portfolio,) cumulative_return,
   signal, returns] にします（h = 1 だけなので horizon 列は持たせません）。h = 1 を計算しない場合も
   表は省略せず、空の DataFrame を入れます（`concat([])` の戻り値のままでよく、列は不要です）。
@@ -307,10 +312,10 @@ metric クラス:
 | `summarize_series(x, horizon=1)` | 時系列（index=date の Series）の要約。{"mean", "std", "t_stat", "hit_rate", "n_periods"} の dict（値はすべて float）。欠損は除いて計算するので、欠損を含む Series をそのまま渡してよい。std は ddof=1、hit_rate は値が正の期間の割合、n_periods は欠損でない期間数、t_stat は lag = horizon − 1 の Newey-West（下の newey_west_tstat。std から計算した値ではない）。全て欠損でも例外は出ず、n_periods は 0.0、他は NaN |
 | `newey_west_tstat(x, lags)` | 平均がゼロかどうかの Newey-West t 値（float）。欠損は除く。有効な値が 2 未満なら NaN。分散は n で割る（ddof=0）ので、lags=0 のときは `mean / (std(ddof=0) / sqrt(n))` に一致し、通常の t 値（ddof=1）の sqrt(n / (n − 1)) 倍になる。標準誤差が 0（値がすべて同じ）なら NaN。テストで検算するときはこの式で計算する |
 | `assign_quantiles(values, n_quantiles, by=None)` | 日付（と by）ごとに 1（最小）〜 n_quantiles（最大）の分位を割り当てる。values は index=(date, asset_id) の Series。by は values と同じ index の Series。分位 = floor((rank − 1) × n_quantiles / n) + 1（rank は日付内の昇順の順位で、同順位は出現順に分ける。n はその日付の欠損でない値の数）。値の境界で切る qcut ではなく、各分位の銘柄数がほぼ均等になる（最上位分位は floor(n / n_quantiles) 銘柄）。戻り値は values と同じ index の float の Series。values が欠損の行は欠損、n < n_quantiles の日付はすべて欠損 |
-| `quantile_portfolios(df, quantile, n_quantiles, dates)` | 分位ごとの等ウェイト平均リターン。df は aligned の出力、dates は `pd.Index(data.dates, name=DATE)`。戻り値は (long, wide)。long の columns=[date, quantile, mean_return, n]（データのある組だけ）、wide は index=dates、columns=[Q1, ..., Q{n}, spread]（spread = Q{n} − Q1） |
+| `quantile_portfolios(df, quantile, n_quantiles, dates)` | 分位ごとの等ウェイト平均リターン。df は aligned の出力、quantile は df と同じ index の `assign_quantiles` の戻り値（欠損の行は使わない）、dates は `pd.Index(data.dates, name=DATE)`。戻り値は (long, wide)。long の columns=[date, quantile, mean_return, n]（データのある組だけ）、wide は index=dates、columns=[Q1, ..., Q{n}, spread]（spread = Q{n} − Q1） |
 | `summarize_portfolios(wide, horizon, aggregation)` | wide（index=date、列名は任意）の各列の要約。dict のリスト（portfolio, arith_mean, geo_mean。列名が "spread" の列だけ t_stat, hit_rate も） |
-| `cumulative_portfolios(wide, kind, aggregation)` | wide（index の name が "date"、列名は任意）の各列の累積リターン（long）。columns=[date, portfolio, cumulative_return] |
-| `per_period_rate(r, horizon, method)` | h 期間のリターンを1期間あたりに換算。method は "compound" / "sum"。異なるホライズンどうしを比べるときだけ使う |
+| `cumulative_portfolios(wide, method)` | wide（index の name が "date"、列名は任意）の各列の累積リターン（long）。columns=[date, portfolio, cumulative_return]。method は "cumprod" / "cumsum" で、`p.aggregation.method_for(...)` の戻り値を渡す |
+| `per_period_rate(r, horizon, method)` | h 期間のリターンを1期間あたりに換算。r はスカラーまたは Series で、同じ形で返す。"cumprod" は `(1 + r) ** (1 / horizon) - 1`、"cumsum" は `r / horizon`。欠損は欠損のまま。"cumprod" で r < -1 のとき、numpy の値と Series は NaN になるが Python の float は複素数になるので、`summarize` の戻り値を渡すときは先に r < -1 を欠損にする。method には、そのリターンを束ねた方法 `data.return_aggregations[ret]` を渡す（`method_for` の戻り値ではない）。異なるホライズンどうしを比べるときだけ使う |
 | `flatten_summary(frame, keys, stats)` | 要約の表（1行が1組）を dict にする。keys の列の値を渡した順に `/` でつなぎ、最後に `/{stat}` を付ける。`horizon` という名前の列だけ `h{値}` と書く。keys は何個でもよく、horizon がなくてもよい（例: `["signal"]` → `"alpha/mean_turnover"`、`["signal", "returns", "horizon"]` → `"alpha/total/h1/mean_ic"`）。欠損は NaN のまま入る |
 | `concat(frames)` | DataFrame のリストを縦に連結（index を振り直す。空リストなら空の DataFrame） |
 | `CorrMethod` | `Literal["spearman", "pearson"]` の型 |
@@ -318,17 +323,24 @@ metric クラス:
 ゼロ以外の基準値 c との差を検定するときは `summarize_series(x - c, h)["t_stat"]` を使います
 （このとき mean / hit_rate は差の系列に対する値です）。
 
-期間をまたぐリターンの集計には `ReturnAggregation` を使います。パラメータに
-`aggregation: ReturnAggregation = Field(default_factory=ReturnAggregation)` を持たせ、次を呼びます。
-フィールドは `cumulative`（kind → "compound" / "sum"。既定は total が compound、specific が sum）だけです。
+期間をまたぐリターンの集計には `ReturnAggregation` を使います。累積リターンの表を出す metric だけ、パラメータに
+`aggregation: ReturnAggregation = Field(default_factory=ReturnAggregation)` を持たせます。累積リターンを出さない
+metric は、指定しても効かない設定になるので `aggregation` を持たせず、`ReturnAggregation.summarize(series)` を
+直接呼びます（`summarize_portfolios` には `ReturnAggregation()` を渡します）。
+フィールドは `cumulative`（リターン系列名 → "cumprod" / "cumsum" の dict。既定は空で、各系列は自身の束ね方を
+使う）だけです。定義されていない系列名は、ライブラリが計算前にエラーにします。
 
-- `p.aggregation.summarize(series)` → {"arith_mean": float, "geo_mean": float}。欠損は除いて計算し、
+- `ReturnAggregation.summarize(series)`（`p.aggregation` からも呼べる）→ {"arith_mean": float, "geo_mean": float}。欠損は除いて計算し、
   有効な値がなければ両方 NaN（例外は出ない）。geo_mean は `expm1(mean(log1p(r)))`
-  （= (∏(1 + r))^(1/n) − 1）で、r <= −1 の値が1つでもあれば NaN。kind によらず同じ式で、specific の
-  系列でも両方を出す。ホライズンの換算はしない。
-- `p.aggregation.cumulate(series_or_frame, kind)` → 入力と同じ index・columns の累積リターン。
-  "compound" は `(1 + r).cumprod() - 1`、"sum" は `r.cumsum()`（どちらも 0 始まりのリターンで、1 始まりの
-  指数ではない）。欠損の日付は欠損のまま残り、累積はその前後をつないで続く。Series を渡せば Series が返る。
+  （= (∏(1 + r))^(1/n) − 1）で、r <= −1 の値が1つでもあれば NaN。系列の束ね方によらず同じ式で、
+  cumsum の系列でも両方を出す。ホライズンの換算はしない。
+- `p.aggregation.method_for(series, default)` → 累積方法（"cumprod" / "cumsum"）。`cumulative` に series の
+  指定があればその方法、なければ default。metric では次のように取得する:
+  `method = p.aggregation.method_for(ret, data.return_aggregations[ret])`
+- `p.aggregation.cumulate(returns, method)` → 入力（Series または DataFrame）と同じ index・columns の
+  累積リターン。method は上の `method_for` の戻り値を渡す。
+  "cumprod" は `(1 + r).cumprod() - 1`、"cumsum" は `r.cumsum()`（どちらも累積リターンで、最初の行の値は
+  その期のリターン r。0 の行は足さず、1 始まりの指数でもない）。欠損の日付は欠損のまま残り、累積はその前後をつないで続く。Series を渡せば Series が返る。
 
 # 守るルール
 
@@ -355,7 +367,7 @@ metric クラス:
    summary のキーを書く。型エイリアスは `TypeAlias` で書く。Python 3.12。1行は表示幅で100桁まで
    （全角文字は2桁に数える）。数え間違いに備えて 96 桁以内を目安にし、日本語だけの行は約45文字で
    折り返す。docstring の `columns=[...]` は日本語の文に続けず、新しい行から書く。コードの文は100桁に
-   収まるなら1行に書く。
+   収まるなら1行に書き、収まらない文は右端の括弧の中で折り返す（ruff format の既定）。
 10. ICIR は出力しない。
 
 # 実例1（組み込みの ic metric。docstring を短くしたもの）
@@ -496,7 +508,7 @@ df = data.signals[[signal]].join(model.exposures[factors], how="inner").dropna(s
 - シグナル: `alpha`、`noise`、`mixed`（alpha と noise の平均）。約 5% がランダムに欠損し、日付ごとの
   有効な銘柄数は 70〜80。値は連続で同順位はない。3つとも行ごとに独立な乱数で、時系列方向の持続性は
   ない（自己相関はほぼ 0）
-- リターン系列: `total`（kind=total）と `specific`（kind=specific）。ホライズンは 1 と 3。
+- リターン系列: `total`（"cumprod"）と `specific`（"cumsum"）。ホライズンは 1 と 3。
   フォワードリターンは36日付すべてにあり、欠損はない
 - `alpha` は値が大きいほど次の行の specific リターンが高い（平均 IC は h=1 で約 0.3、h=3 で約 0.2。
   total でもほぼ同じ）。`noise` の IC はほぼ 0
@@ -604,7 +616,7 @@ uv run pytest tests/metrics/test_<name>.py        # AI が書いたテスト
 
 ## このプロンプトの検証
 
-このプロンプトは、リポジトリを見られない AI に6種類の依頼を渡して確かめています（上位銘柄の的中率、上位分位の入れ替わり率、分位スプレッドのファクターエクスポージャー、大型・小型別の IC、順位加重ロングショート、使えないデータを要求する依頼）。コードを書く5種類は、生成されたファイルを実際に登録し、契約テストと評価の実行、独立に計算した値との照合まで通ることを確認しました。使えないデータを要求する依頼は、コードを書かずに断ることを確認しました。プロンプトを変更したら、同じように1〜2種類の依頼で試してください。
+このプロンプトは、リポジトリを見られない AI に10種類の依頼を渡して確かめています。コードを書く7種類（上位銘柄の的中率、上位分位の入れ替わり率、分位スプレッドのファクターエクスポージャー、大型・小型別の IC、順位加重ロングショート、ベンチマークのカバー率、上位分位の1期間あたりリターン）は、生成されたファイルを実際に登録し、契約テストと評価の実行、独立に計算した値との照合まで確認しました（一部は整形やテスト1件の修正が必要でした）。使えないデータを要求する1種類はコードを書かずに断り、既存の metric で足りる2種類は設定例を答えることを確認しました。プロンプトを変更したら、同じように1〜2種類の依頼で試してください。
 
 ## このプロンプトの保守
 

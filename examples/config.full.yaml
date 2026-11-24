@@ -115,7 +115,8 @@ benchmark:
 # -----------------------------------------------------------------------------
 # リターン: 名前付き系列の集合。系列名は全ソースで一意
 #
-# kind:       total（複利で集約）/ specific（加算で集約）。期間内の集約方法は kind から決まる
+# aggregation: 複数期間を束ねる方法。cumprod（複利）/ cumsum（加算）。系列ごとに必須。
+#             系列名は自由（total / specific のほか、超過リターンなどの系列も定義できる）
 # convention: realized（行 t のリターン = 行 t-1 → t の実現リターン）/ forward（行 t → t+1）。
 #             省略時: realized。行 t のシグナルに対し、realized なら行 t+1〜t+h、forward なら行 t〜t+h-1 を束ねる
 # valid_range: [下限, 上限]（両端を含む）。範囲外の値（DB / Barra は日次、ファイルは期間の値）は
@@ -132,8 +133,8 @@ returns:
     columns: {date: dt, asset_id: code}
     valid_range: [-1, 10]       # 省略時と同じ。分割・併合が未反映のデータなら上限を厳しくする等
     series:
-      total:    {column: ret,  kind: total}
-      specific: {column: sret, kind: specific}
+      total:    {column: ret,  aggregation: cumprod}
+      specific: {column: sret, aggregation: cumsum}
 
   # ファイル: カレンダーの行ごとに1ファイル = すでに期間リターン（集約しない）
   - source: file
@@ -141,7 +142,7 @@ returns:
     convention: realized
     columns: {asset_id: code}
     series:
-      other_specific: {column: sret, kind: specific}
+      other_specific: {column: sret, aggregation: cumsum}
 
   # Barra: SQL を書かずに社内 DB の Barra のリターンを読む（data/barra.py。match_on 必須）。
   #   DRTN（取引通貨建てのトータル）→ total、SRTN → specific。日次の % を小数にして期間に集約する。
@@ -239,9 +240,9 @@ metrics:
       n_quantiles: 5
       demean: false             # true なら日付ごとのユニバース平均を差し引いた超過リターンで集計
       aggregation:
-        # 累積リターン系列の計算方法（kind ごと）。指定しなかった kind は既定値
-        # 省略時: {total: compound, specific: sum}
-        cumulative: {total: compound, specific: sum}
+        # 累積リターン系列の計算方法を、リターン系列名ごとに変える（cumprod / cumsum）。
+        # 書かなかった系列は、returns の series に書いた aggregation を使う。省略時: {}
+        cumulative: {total: cumprod, specific: cumsum}
 
   # 同じ metric を別の設定でもう一度使う場合は id 必須
   - name: quantile
@@ -263,7 +264,7 @@ metrics:
       n_quantiles: 5            # カテゴリ内の分位数（銘柄数が足りない日付 × カテゴリは除く）
       column: category
       aggregation:
-        cumulative: {total: compound, specific: sum}
+        cumulative: {total: cumprod, specific: cumsum}
 
   # カテゴリ別の平均フォワードリターンと累積リターン（シグナルのある銘柄の等ウェイト）
   - name: category_returns

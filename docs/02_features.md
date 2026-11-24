@@ -12,7 +12,7 @@
 - config.yaml の各キー、DB 接続、エラーメッセージ: [03 設定項目リファレンス](03_config.md#1-全体の骨格)
 - 各 metric の計算方法・パラメータ・出力の列: [04 組み込み metric リファレンス](04_metrics.md#2-metric-一覧)
 - metric の追加: [05 metric の追加方法](05_adding_metrics.md#2-最短手順)
-- なぜこの仕様なのか: [01 設計思想](01_design.md#2-4つの原則)。用語（シグナル、ホライズン、フォワードリターン、kind など）の定義も [01 の「この文書で使う用語」](01_design.md#この文書で使う用語) にあります。
+- なぜこの仕様なのか: [01 設計思想](01_design.md#2-4つの原則)。用語（シグナル、ホライズン、フォワードリターン、リターン系列、aggregation など）の定義も [01 の「この文書で使う用語」](01_design.md#この文書で使う用語) にあります。
 
 ## 1. 全体像
 
@@ -104,13 +104,13 @@ output/
 |---|---|---|---|---|
 | カレンダー | `calendar` | 評価の時間軸の定義（1行 = 1評価期間） | 必須 | 空白区切りのテキストファイル |
 | シグナル | `data.signals` | 評価対象のスコア。複数のソースを並べられる | 必須 | file / db |
-| リターン | `returns` | フォワードリターンの元になる系列。系列ごとに kind（`total` / `specific`）を持つ | リターンを使う metric には必須 | file / db / barra |
+| リターン | `returns` | フォワードリターンの元になる系列。系列ごとに名前と束ね方（`aggregation`）を持つ | リターンを使う metric には必須 | file / db / barra |
 | 業種分類 | `data.classification` | カテゴリ別の metric（`category_ic` など） | 任意 | file / db |
 | ユニバース | `universe` | シグナルを評価対象の (日付, 銘柄) に絞る | 任意 | file / db |
 | ベンチマークウェイト | `benchmark` | `DataBundle.benchmark_weights` に入る。省略時は、ユニバースの `columns` で role の `weight` に列を対応づけていれば、その列を使う | 任意 | file / db |
 | リスクモデル | `risk_models.<名前>` | エクスポージャー、ファクター共分散、スペシフィックリスク、ファクターリターンを1モデル分まとめる | 任意 | file / db / barra |
 
-- kind はリターンの種類です。`total` はトータルリターン、`specific` はリスクモデルのスペシフィックリターンで、期間をまたぐ束ね方が kind で決まります（[4.4](#44-フォワードリターンの定義)）。
+- リターン系列の名前は自由に付けられます（`total`、`specific`、`excess`、`usd_total` など）。名前によって計算は変わらず、期間をまたぐ束ね方は系列ごとの `aggregation` で決まります（[4.4](#44-フォワードリターンの定義)）。
 - 「必須」は config からデータを読む場合の話です。手元の DataFrame を渡す Python API（[7.2](#72-python-api)）では `calendar` / `data` / `returns` は要りません。
 - 組み込み metric が使うリスクモデルのデータは、いまのところエクスポージャーだけです（`factor_correlation`）。
   ベンチマークウェイト、ファクター共分散、スペシフィックリスク、ファクターリターンは `DataBundle` に読み込まれますが、使う組み込み metric はまだありません（[9 章](#9-現時点でできないこと未実装)）。自作の metric からは参照できます。
@@ -121,7 +121,7 @@ output/
 |---|---|---|
 | `file` | 拡張子でリーダーを選ぶ: `.csv` / `.dat` / `.tsv`（`pandas.read_csv`）、`.parquet`、`.pkl` | 区切り文字やヘッダーの有無は `read_options` で `pandas` にそのまま渡す |
 | `db` | 接続先の名前（`connection`）と SQL ファイル（`query`）を指定する。期間は SQL の `:start` / `:end` に自動で渡される | SQL Server / MySQL / PostgreSQL。ホスト名と認証情報は config に書かず、環境変数から読む |
-| `barra` | 社内 DB の Barra（`JPE4` / `GEMLT` / `GEM3`）を SQL なしで読む | リターン（`total` / `specific`）と、リスクモデルのエクスポージャー・ファクター共分散・ファクターリターン。単位の換算（% → 小数など）は読み込み時に行う。銘柄 ID は、`JPE4` では社内の銘柄コード（nri_code）に変換し、`GEMLT` / `GEM3` では Barra の銘柄 ID（BID）のまま使うのが既定 |
+| `barra` | 社内 DB の Barra（`JPE4` / `GEMLT` / `GEM3`）を SQL なしで読む | リターン（`total` = DRTN、`specific` = SRTN のどちらかを系列ごとに選ぶ）と、リスクモデルのエクスポージャー・ファクター共分散・ファクターリターン。単位の換算（% → 小数など）は読み込み時に行う。銘柄 ID は、`JPE4` では社内の銘柄コード（nri_code）に変換し、`GEMLT` / `GEM3` では Barra の銘柄 ID（BID）のまま使うのが既定 |
 
 ファイルには2つの置き方があります。
 
@@ -201,16 +201,25 @@ convention は、リターンのソースの「行 t の値がどの期間のリ
 
 ### 4.4 フォワードリターンの定義
 
-h 行分の期間リターンを束ねる方法は kind で決まります。利用者は選べません。
+h 行分の期間リターンを束ねる方法は、リターン系列ごとに config の `aggregation` で指定します。必須の項目で、系列の名前からは決まりません。
 
-| kind | 束ね方 | 式（期間リターンを r として） |
+| `aggregation` | 束ね方 | 式（期間リターンを r として） |
 |---|---|---|
-| `total` | 複利 | (1 + r₁)(1 + r₂)…(1 + r_h) − 1 |
-| `specific` | 加算 | r₁ + r₂ + … + r_h |
+| `cumprod` | 複利 | (1 + r₁)(1 + r₂)…(1 + r_h) − 1 |
+| `cumsum` | 加算 | r₁ + r₂ + … + r_h |
 
-example1（convention は `realized`）の銘柄 `01346` を例にします。`input/returns/` の各ファイルの値は次のとおりです。
+系列の `aggregation` は、次の4つの計算に共通で使います。
 
-| ファイル（行） | `ret`（total） | `sret`（specific） |
+- 日次から期間への集約（`source: db` / `barra` のみ。[4.5](#45-日次データの期間集約db--barra)）
+- フォワードリターン
+- `alpha_decay` の1期間あたりへの換算
+- 累積リターンの表の既定値。累積リターンだけは、metric のパラメータ `aggregation.cumulative` で系列ごとに変えられます（[04 の 1.3](04_metrics.md#13-リターンの集計規約-aggregation)）
+
+`source: barra` は例外で、`aggregation` を選べません。`series` に `{系列名: total または specific}` と書き、この値で読むデータと束ね方が決まります。`total` は DRTN を `cumprod` で、`specific` は SRTN を `cumsum` で束ねます。
+
+example1（convention は `realized`）の銘柄 `01346` を例にします。config では、系列 `total` は列 `ret` で `aggregation: cumprod`、系列 `specific` は列 `sret` で `aggregation: cumsum` です。`input/returns/` の各ファイルの値は次のとおりです。
+
+| ファイル（行） | `ret`（`total`） | `sret`（`specific`） |
 |---|---|---|
 | `20240628.csv` | 0.05548 | −0.04508 |
 | `20240731.csv` | −0.10592 | −0.07160 |
@@ -220,8 +229,8 @@ example1（convention は `realized`）の銘柄 `01346` を例にします。`i
 
 | 系列 | h = 1 | h = 3 |
 |---|---|---|
-| total | 0.05548（`20240628.csv` の値） | 1.05548 × 0.89408 × 0.95126 − 1 ≈ −0.1023 |
-| specific | −0.04508（`20240628.csv` の値） | −0.04508 − 0.07160 − 0.08778 ≈ −0.2045 |
+| `total`（`cumprod`） | 0.05548（`20240628.csv` の値） | 1.05548 × 0.89408 × 0.95126 − 1 ≈ −0.1023 |
+| `specific`（`cumsum`） | −0.04508（`20240628.csv` の値） | −0.04508 − 0.07160 − 0.08778 ≈ −0.2045 |
 
 `realized` なので、行 `20240531` 自身のファイル（`20240531.csv` = 4月末から5月末までのリターン）は使われません。
 
@@ -233,7 +242,7 @@ example1（convention は `realized`）の銘柄 `01346` を例にします。`i
 - `forward` の場合、行 `20240531` の期間は `20240531 <= 日付 < 20240628` です。
 - `match_on` が月（6桁）の列なら、境界はその月の月末日になります。`realized` で連続した月が並ぶカレンダーでは、その月の1日から月末日までが1期間です。
   `forward` では、行の月の月末日から、次の行の月の月末日の前日までが1期間です（たとえば `202405` の行は `20240531 <= 日付 < 20240630`）。
-- 期間内の束ね方は [4.4](#44-フォワードリターンの定義) と同じです（`total` は複利、`specific` は加算）。リスクモデルのファクターリターンは常に加算です。
+- 期間内の束ね方は [4.4](#44-フォワードリターンの定義) と同じで、系列の `aggregation`（`cumprod` または `cumsum`）に従います。リスクモデルのファクターリターンは常に加算です。
 - `source: db` は、必要な範囲全体を1クエリで取得します。SQL では `WHERE dt > :start AND dt <= :end` のように `:start` / `:end` を参照します。
 
 ### 4.6 valid_range（範囲外の値の扱い）
@@ -241,7 +250,7 @@ example1（convention は `realized`）の銘柄 `01346` を例にします。`i
 リターンのソースごとに `valid_range`（既定は `[-1, 10]`、つまり −100% 〜 +1000%）を持ちます。
 範囲の外の値は、DB の特殊値や単位の誤りといったデータの誤りとみなして欠損にし、件数と例を警告に出します。
 
-- DB / Barra では集約前の日次の値、ファイルでは期間の値に適用します。`total` と `specific` の両方が対象です。
+- DB / Barra では集約前の日次の値、ファイルでは期間の値に適用します。そのソースのすべてのリターン系列が対象です。
 - 統計的な外れ値の処理ではありません。ウィンソライズなどが必要な場合は、読み込みの段階ではなく metric 側で行う方針です（理由は [01 の原則 2](01_design.md#原則-2-欠損は欠損のまま)）。
 
 ### 4.7 ユニバースの適用と複数ソースの結合
@@ -519,7 +528,7 @@ ic  IC (spearman or pearson)  (requires: forward_returns, signals)
 |---|---|
 | `evaluate(config, *, data=None, n_jobs=None, save=False)` | 評価を実行して `EvaluationReport` を返す |
 | `validate(config, *, check_files=True)` | 計算せずに検証し、`ValidationReport`（`ok` / `errors` / `warnings`）を返す |
-| `make_bundle(signals, period_returns, *, return_kinds, horizons, ...)` | 手元の DataFrame から `DataBundle` を作る |
+| `make_bundle(signals, period_returns, *, return_aggregations, horizons, ...)` | 手元の DataFrame から `DataBundle` を作る |
 
 このほか、`load_config`（config.yaml を読み込んで `EvaluationConfig` を返す）と、型の `EvaluationConfig`・`DataBundle`・`RiskModelData`・`EvaluationReport`・`ConfigValidationError` も同じ場所から import できます。
 metric を自作するための `Metric`・`MetricParams`・`MetricResult`・`ReturnAggregation`・`register_metric` は [05 の 4 章（契約の詳細）](05_adding_metrics.md#4-契約の詳細) で、`DataBundle` の属性とメソッドは [05 の 5 章（DataBundle の使い方）](05_adding_metrics.md#5-databundle-の使い方) で説明します。
@@ -578,7 +587,7 @@ specific = pd.DataFrame({d: r["sret"] for d, r in raw.items()}).T
 bundle = make_bundle(
     signals,
     {"total": total, "specific": specific},
-    return_kinds={"total": "total", "specific": "specific"},
+    return_aggregations={"total": "cumprod", "specific": "cumsum"},
     horizons=[1, 2],                      # convention の既定は realized
 )
 report = evaluate({"version": 1, "metrics": [{"name": "ic"}]}, data=bundle)

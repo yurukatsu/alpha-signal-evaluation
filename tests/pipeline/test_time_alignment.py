@@ -19,27 +19,27 @@ def _period(values: list[float]) -> pd.DataFrame:
 class TestForwardReturns:
     def test_realized_h1_is_next_row(self):
         period = _period([np.nan, 0.01, 0.02, 0.03, 0.04, 0.05])
-        fwd = forward_returns(period, [1], "realized", "sum")[1]["A"]
+        fwd = forward_returns(period, [1], "realized", "cumsum")[1]["A"]
         # 行 t のシグナルに対し行 t+1 の実現リターン
         assert fwd.tolist()[:5] == pytest.approx([0.01, 0.02, 0.03, 0.04, 0.05])
         assert np.isnan(fwd.iloc[-1])
 
     def test_forward_h1_is_same_row(self):
         period = _period([0.01, 0.02, 0.03, 0.04, 0.05, 0.06])
-        fwd = forward_returns(period, [1], "forward", "sum")[1]["A"]
+        fwd = forward_returns(period, [1], "forward", "cumsum")[1]["A"]
         assert fwd.tolist() == pytest.approx([0.01, 0.02, 0.03, 0.04, 0.05, 0.06])
 
     def test_realized_multi_horizon_sum(self):
         period = _period([np.nan, 0.01, 0.02, 0.03, 0.04, 0.05])
-        fwd = forward_returns(period, [3], "realized", "sum")[3]["A"]
+        fwd = forward_returns(period, [3], "realized", "cumsum")[3]["A"]
         # 行 t+1 〜 t+3
         assert fwd.iloc[0] == pytest.approx(0.01 + 0.02 + 0.03)
         assert fwd.iloc[2] == pytest.approx(0.03 + 0.04 + 0.05)
         assert fwd.iloc[3:].isna().all()
 
-    def test_forward_multi_horizon_compound(self):
+    def test_forward_multi_horizon_cumprod(self):
         period = _period([0.1, 0.2, -0.1, 0.0, 0.05, 0.02])
-        fwd = forward_returns(period, [2], "forward", "compound")[2]["A"]
+        fwd = forward_returns(period, [2], "forward", "cumprod")[2]["A"]
         # 行 t 〜 t+1 を複利で束ねる
         assert fwd.iloc[0] == pytest.approx(1.1 * 1.2 - 1)
         assert fwd.iloc[1] == pytest.approx(1.2 * 0.9 - 1)
@@ -47,7 +47,7 @@ class TestForwardReturns:
 
     def test_missing_period_stays_missing(self):
         period = _period([np.nan, 0.01, np.nan, 0.03, 0.04, 0.05])
-        fwd = forward_returns(period, [2], "realized", "sum")[2]["A"]
+        fwd = forward_returns(period, [2], "realized", "cumsum")[2]["A"]
         # 行 0 は行 1・2 を使うが行 2 が欠損 → 0 埋めせず欠損
         assert np.isnan(fwd.iloc[0])
         assert np.isnan(fwd.iloc[1])
@@ -58,7 +58,7 @@ class TestForwardReturns:
         signal = pd.DataFrame(rng.standard_normal((6, 20)), index=pd.Index(KEYS, name="date"))
         # realized: 行 t のリターンは行 t-1 のシグナルで決まる
         period = signal.shift(1)
-        fwd = forward_returns(period, [1], "realized", "sum")[1]
+        fwd = forward_returns(period, [1], "realized", "cumsum")[1]
         pd.testing.assert_frame_equal(fwd.iloc[:-1], signal.iloc[:-1])
 
 
@@ -82,21 +82,21 @@ class TestPeriodReturns:
 
     def test_realized_buckets(self):
         daily = self._daily([0.5, 0.5, 0.01, 0.02, 0.03, 0.04, 0.05])
-        out = to_period_returns(daily, self.BOUNDS, "realized", "sum")["A"]
+        out = to_period_returns(daily, self.BOUNDS, "realized", "cumsum")["A"]
         # 最初の行は起点がないため欠損（1/28・1/31 はどの期間にも入らない）
         assert np.isnan(out.iloc[0])
         # (1/31, 2/28] と (2/28, 3/31]
         assert out.iloc[1] == pytest.approx(0.01 + 0.02 + 0.03)
         assert out.iloc[2] == pytest.approx(0.04 + 0.05)
 
-    def test_realized_compound(self):
+    def test_realized_cumprod(self):
         daily = self._daily([0.5, 0.5, 0.01, 0.02, 0.03, 0.04, 0.05])
-        out = to_period_returns(daily, self.BOUNDS, "realized", "compound")["A"]
+        out = to_period_returns(daily, self.BOUNDS, "realized", "cumprod")["A"]
         assert out.iloc[1] == pytest.approx(1.01 * 1.02 * 1.03 - 1)
 
     def test_forward_buckets(self):
         daily = self._daily([0.5, 0.01, 0.02, 0.03, 0.04, 0.05, 0.9])
-        out = to_period_returns(daily, self.BOUNDS, "forward", "sum")["A"]
+        out = to_period_returns(daily, self.BOUNDS, "forward", "cumsum")["A"]
         # [1/31, 2/28) と [2/28, 3/31)。最後の行は終点がないため欠損
         assert out.iloc[0] == pytest.approx(0.01 + 0.02 + 0.03)
         assert out.iloc[1] == pytest.approx(0.04 + 0.05)
@@ -104,6 +104,6 @@ class TestPeriodReturns:
 
     def test_all_missing_period_is_not_zero(self):
         daily = self._daily([0.5, 0.5, np.nan, np.nan, np.nan, 0.04, 0.05])
-        out = to_period_returns(daily, self.BOUNDS, "realized", "compound")["A"]
+        out = to_period_returns(daily, self.BOUNDS, "realized", "cumprod")["A"]
         assert np.isnan(out.iloc[1])
         assert out.iloc[2] == pytest.approx(1.04 * 1.05 - 1)
