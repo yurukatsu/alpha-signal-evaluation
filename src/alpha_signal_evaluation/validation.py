@@ -115,8 +115,7 @@ def spec_from_config(cfg: EvaluationConfig) -> DataSpec:
     - ``signals``: ``data`` セクションがある場合
     - ``classification``: ``data.classification`` がある場合
     - ``forward_returns``: ``returns`` が1つ以上ある場合
-    - ``benchmark_weights``: ``benchmark`` がある場合、または ``universe.columns`` に
-      ``weight`` role がある場合
+    - ``benchmark_weights``: ``benchmark`` がある場合（``universe`` のウェイトは使わない）
     - ``risk_models`` と ``risk_models.<構成要素>``: ``risk_models`` がある場合
 
     ``portfolio_weights`` は config では未対応のため含めない。
@@ -135,7 +134,7 @@ def spec_from_config(cfg: EvaluationConfig) -> DataSpec:
             provides.add("classification")
     if cfg.returns:
         provides.add("forward_returns")
-    if cfg.benchmark is not None or (cfg.universe is not None and WEIGHT in cfg.universe.columns):
+    if cfg.benchmark is not None:
         provides.add("benchmark_weights")
     if cfg.risk_models:
         provides.add("risk_models")
@@ -410,6 +409,24 @@ def _required_roles(label: str, source: FileSource | DBSource) -> frozenset[str]
     return roles | {DATE}
 
 
+def _universe_weight_warnings(cfg: EvaluationConfig) -> list[str]:
+    """``universe.columns`` に ``weight`` があれば、使わないことを知らせる警告を返す。
+
+    ユニバースは銘柄の絞り込みにだけ使う。以前の版はユニバースのウェイトを
+    ベンチマークウェイトとして使っていたため、その config も通るように ``weight`` の
+    対応はエラーにせず、警告にとどめる。
+
+    Returns:
+        警告文のリスト（0件か1件）。
+    """
+    if cfg.universe is None or WEIGHT not in cfg.universe.columns:
+        return []
+    return [
+        "universe.columns: `weight` is ignored; the universe only selects assets. "
+        "To use these weights as the benchmark, set `benchmark` to the same source"
+    ]
+
+
 def _check_role_mappings(label: str, source: FileSource | DBSource) -> list[str]:
     """``columns`` に、読み込みに必要な role の対応がすべて書かれているかを確認する。
 
@@ -558,6 +575,7 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
        カレンダーの末尾に足りなければ警告）
     3. 各データソースの設定（プレースホルダ・``match_on``・拡張子・DB の接続先と SQL、
        Barra の ``match_on``）と、``columns`` に必要な role の対応があるか
+       （``universe.columns`` の ``weight`` は使わないので警告）
     4. DB の接続先ごとのホスト名・認証情報の環境変数
     5. 有効な metric の名前・params・要求データ（``spec_from_config()`` と照合）
        と、``output.by_date`` に列挙した日付が評価期間にあるか
@@ -602,6 +620,7 @@ def validate_config(cfg: EvaluationConfig, *, check_files: bool = True) -> Valid
             report.errors += _check_date_column(label, source.match_on, is_period, calendar, plan)
     for label, source, _ in _iter_sources(cfg):
         report.errors += _check_role_mappings(label, source)
+    report.warnings += _universe_weight_warnings(cfg)
 
     report.errors += _check_connections(cfg)
     report.errors += validate_metrics(cfg.enabled_metrics, spec_from_config(cfg))

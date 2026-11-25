@@ -983,10 +983,10 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
     2. ``LoadContext``（DB 接続とキャッシュ。終了時に DB 接続を閉じる）の中で読む。
 
        - シグナル: 評価行。
-       - ユニバース（任意）: 評価行の (date, asset_id) にシグナルを絞る。ユニバースに
-         ``weight`` 列があればベンチマークウェイトとして使う。
-       - ベンチマーク（任意）: ``weight`` をベンチマークウェイトにする
-         （ユニバースのウェイトより優先）。
+       - ユニバース（任意）: 評価行の (date, asset_id) にシグナルを絞る。使うのは
+         銘柄だけで、``weight`` などほかの列は使わない（ベンチマークウェイトにもしない）。
+       - ベンチマーク（任意）: ``weight`` をベンチマークウェイトにする。指定しなければ
+         ベンチマークウェイトはなく、それを要求する metric は検証でエラーになる。
        - 分類（任意）: 評価行。
        - リターン: ソースごとに延長行の期間リターンを読み、系列の
          ``aggregation`` とソースの convention でフォワードリターンに
@@ -1026,8 +1026,6 @@ def build_bundle(cfg: EvaluationConfig) -> PreparedData:
             members = load_snapshot(cfg.universe, plan.eval_rows, ctx, roles)
             members = members.set_index([DATE, ASSET_ID]).sort_index()
             signals = signals[signals.index.isin(members.index)]
-            if WEIGHT in members.columns:
-                benchmark_weights = members[[WEIGHT]].astype(float)
 
         if cfg.benchmark is not None:
             roles, _ = source_requirements("benchmark", cfg.benchmark)

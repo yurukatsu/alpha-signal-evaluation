@@ -27,15 +27,22 @@ data:
       values: {dss: score}
   classification:
     source: file
-    path: ./input/labels/{Label2}.csv      # L001〜L010 の one-hot
-    columns: {asset_id: nri_code}
-    one_hot: true                           # 1 が立っている列名（L001 等）をカテゴリにする
+    path: ./input/labels/{Label2}.csv      # 縦持ち: 1行1銘柄で、label 列に L001〜L010
+    columns: {asset_id: nri_code, category: label}
+    # one-hot（L001〜L010 の 0/1 の列）のファイルなら、category を書かずに one_hot: true
 
 universe:
   source: file
-  path: ./input/univ/{Trading_day}.dat     # "# ..." のコメント行 + コード・ウェイトのタブ区切り
+  path: ./input/univ/{Trading_day}.dat     # "# ..." のコメント行 + 1行1銘柄のコード
+  # 1列目（銘柄）だけを読む。2列目にウェイトがある旧形式のファイルもそのまま読める
+  read_options: {sep: "\t", comment: "#", header: null, usecols: [0], names: [nri_code]}
+  columns: {asset_id: nri_code}
+
+benchmark:
+  source: file
+  path: ./input/bm/{Trading_day}.dat       # "# ..." のコメント行 + コード・ウェイトのタブ区切り
   read_options: {sep: "\t", comment: "#", header: null, names: [nri_code, weight]}
-  columns: {asset_id: nri_code, weight: weight}   # weight はベンチマークウェイトとしても保持
+  columns: {asset_id: nri_code, weight: weight}
 
 returns:
   # サンプル用: Base_day ごとの月次リターン（realized = 行 t-1 → t の実現リターン）

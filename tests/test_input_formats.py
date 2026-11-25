@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from alpha_signal_evaluation import evaluate, validate
 from alpha_signal_evaluation.config import load_config
@@ -62,13 +63,13 @@ def test_sample_bundle(sample):
     assert all(len(c) == 5 for c in codes[:100])  # 先頭ゼロが保たれる
     # {Label2} のファイルでも Base_day が付与される
     assert bundle.dates[0] == "20190329"
-    # one-hot の分類は L001〜L010 のいずれか
+    # 縦持ちの分類は L001〜L010 のいずれか
     assert set(bundle.classification["category"]) <= {f"L{i:03d}" for i in range(1, 11)}
-    # ユニバースのウェイトはベンチマークウェイトとして保持され、日付ごとに合計 1
+    # ベンチマークは universe ではなく bm から読み、日付ごとに合計 1
+    sizes = bundle.benchmark_weights.groupby(level="date").size()
+    assert sizes.max() <= 300
     weights = bundle.benchmark_weights["weight"].groupby(level="date").sum()
     assert weights.to_numpy() == pytest.approx(1.0, abs=1e-4)
-    # シグナルはユニバースの銘柄に限られる
-    assert bundle.signals.index.isin(bundle.benchmark_weights.index).all()
 
 
 def test_sample_evaluation(sample, tmp_path):
@@ -78,16 +79,54 @@ def test_sample_evaluation(sample, tmp_path):
     assert summary.loc[("ai", "specific", 1), "mean_ic"] > 0.03
 
 
-def test_one_hot_with_multiple_flags_is_rejected(sample, tmp_path):
-    root = tmp_path / "broken"
+def _copy_sample(sample: Path, root: Path) -> dict:
+    """サンプルを root に複製し、その config を dict で返す。"""
     shutil.copytree(sample / "input", root / "input")
-    shutil.copy(sample / "config.yaml", root / "config.yaml")
+    return yaml.safe_load((sample / "config.yaml").read_text())
+
+
+def _bundle(root: Path, cfg: dict):
+    (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False))
+    return build_bundle(load_config(root / "config.yaml")).bundle
+
+
+def _to_one_hot(root: Path) -> None:
+    """縦持ちの分類ファイルを、L001〜L010 の 0/1 の列を持つ one-hot の形式に書き換える。"""
+    for path in (root / "input" / "labels").glob("*.csv"):
+        df = pd.read_csv(path, dtype=str)
+        one_hot = pd.get_dummies(df["label"]).astype(int)
+        one_hot.insert(0, "#nri_code", df["#nri_code"])
+        one_hot.to_csv(path, index=False)
+
+
+def test_one_hot_classification_matches_long_format(sample, tmp_path):
+    root = tmp_path / "one_hot"
+    cfg = _copy_sample(sample, root)
+    expected = _bundle(root, cfg).classification
+    _to_one_hot(root)
+    cfg["data"]["classification"]["columns"] = {"asset_id": "nri_code"}
+    cfg["data"]["classification"]["one_hot"] = True
+    pd.testing.assert_frame_equal(_bundle(root, cfg).classification, expected)
+
     path = sorted((root / "input" / "labels").glob("*.csv"))[-1]
     df = pd.read_csv(path, dtype={"#nri_code": str})
     df.loc[0, "L001":"L002"] = 1
     df.to_csv(path, index=False)
     with pytest.raises(ValueError, match="multiple categories"):
-        build_bundle(load_config(root / "config.yaml"))
+        _bundle(root, cfg)
+
+
+def test_universe_file_with_weight_column_is_read(sample, tmp_path):
+    """2列目にウェイトがある旧形式のユニバースも、usecols で銘柄だけを読める。"""
+    root = tmp_path / "legacy"
+    cfg = _copy_sample(sample, root)
+    expected = _bundle(root, cfg).signals
+    for path in (root / "input" / "univ").glob("*.dat"):
+        lines = path.read_text().splitlines()
+        path.write_text(
+            "\n".join(line if line.startswith("#") else f"{line}\t0.001" for line in lines) + "\n"
+        )
+    pd.testing.assert_frame_equal(_bundle(root, cfg).signals, expected)
 
 
 def _run_generator(script: Path, root: Path, *args: str) -> None:

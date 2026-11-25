@@ -839,10 +839,12 @@ class EvaluationConfig(_Base):
         data: シグナルと分類（YAML ``data``、既定 ``None``）。config からデータを読み込む
             場合は必須。
         universe: 評価対象のユニバース（YAML ``universe``、既定 ``None``）。シグナルを
-            この (日付, 銘柄) に絞る。``columns`` に ``weight`` を指定すると、
-            ``benchmark`` がない場合にユニバースのウェイトをベンチマークウェイトとして使う。
+            この (日付, 銘柄) に絞る。必要な role は ``asset_id`` だけ。以前の config との
+            互換のため ``columns`` に ``weight`` を書いてもよいが、使わない（警告を出す）。
         benchmark: ベンチマークウェイト（YAML ``benchmark``、既定 ``None``）。
-            ``asset_id`` と ``weight`` role の列が必要。
+            ``asset_id`` と ``weight`` role の列が必要。省略するとベンチマークウェイトは
+            なく、``benchmark_weights`` を要求する metric は検証でエラーになる
+            （ユニバースのウェイトでは代わりにしない）。
         returns: リターンソースのリスト（YAML ``returns``、既定 ``[]``）。系列名は全ソースで一意。
         risk_models: ``{モデル名: RiskModelConfig | BarraRiskModelConfig}``（YAML ``risk_models``、
             既定 ``{}``）。``source: barra`` と書いたものが ``BarraRiskModelConfig``。
@@ -870,10 +872,9 @@ class EvaluationConfig(_Base):
     period: PeriodConfig = Field(default_factory=PeriodConfig)
     horizons: list[int] = Field(default_factory=lambda: [1], min_length=1)
     data: DataConfig | None = None
-    # columns に weight を指定すると、benchmark がない場合にユニバースのウェイトを
-    # ベンチマークウェイトとして使う
+    # 銘柄の絞り込みにだけ使う（columns の weight は互換のため許すが使わない）
     universe: Source | None = None
-    # ベンチマークウェイト（columns に asset_id と weight が必要）
+    # ベンチマークウェイト（columns に asset_id と weight が必要）。省略時はなし
     benchmark: Source | None = None
     returns: list[ReturnsSource] = Field(default_factory=list)
     risk_models: dict[str, RiskModelSource] = Field(default_factory=dict)

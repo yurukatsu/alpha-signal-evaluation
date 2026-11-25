@@ -8,7 +8,7 @@
 # - 計算せずに検証だけするには: uv run alpha-eval validate config.yaml
 # - metric のパラメータ一覧は: uv run alpha-eval metrics list -v
 #
-# 動く例は examples/example1（日次キー・one-hot 分類）と examples/example2（月次・BARRA ID）を参照。
+# 動く例は examples/example1（日次キー・縦持ちの分類）と examples/example2（月次・BARRA ID）を参照。
 # =============================================================================
 
 version: 1                     # 必須。将来構造を変えたときに旧 config を判別するため
@@ -91,21 +91,25 @@ data:
   # 業種等の分類（任意。category_ic などのカテゴリ別 metric で使う）
   classification:
     source: file
-    path: ./input/labels/{Label2}.csv
-    columns: {asset_id: nri_code}
-    # true なら asset_id 以外の 0/1 の列（L001〜L010 等）から、1 が立っている列名をカテゴリにする。
-    # 省略時: false（columns に category を指定する。例: {asset_id: code, category: gics_sector}）
-    one_hot: true
+    path: ./input/labels/{Label2}.csv            # 縦持ち: 列は nri_code, label（値は L001 等）
+    columns: {asset_id: nri_code, category: label}
+    # true なら asset_id 以外の 0/1 の列（L001〜L010 等）から、1 が立っている列名をカテゴリにする
+    # （one-hot のファイル。このときは columns に category を書かない）。省略時: false
+    one_hot: false
 
-# 評価対象のユニバース（任意）。シグナルをこの (日付, 銘柄) に絞る
+# 評価対象のユニバース（任意）。シグナルをこの (日付, 銘柄) に絞る。
+# ファイルは銘柄の列だけでよい。ほかの列（weight など）があっても使わない
+# （以前の config との互換のため columns に weight を書いても通るが、警告が出るだけで使わない）
 universe:
   source: file
   path: ./input/univ/{Trading_day}.dat
-  read_options: {sep: "\t", comment: "#", header: null, names: [nri_code, weight]}
-  # weight を指定すると、benchmark がない場合にベンチマークウェイトとしても使う
-  columns: {asset_id: nri_code, weight: weight}
+  # 1列目（銘柄）だけを読む（usecols）。2列目にウェイトがある旧形式のファイルも読める
+  read_options: {sep: "\t", comment: "#", header: null, usecols: [0], names: [nri_code]}
+  columns: {asset_id: nri_code}
 
-# ベンチマークウェイト（任意）。columns に asset_id と weight が必要
+# ベンチマークウェイト（任意）。columns に asset_id と weight が必要。
+# 省略するとベンチマークウェイトはなく、それを使う metric（benchmark_weights を requires に
+# 持つもの）は計算前の検証でエラーになる。ユニバースのウェイトでは代わりにしない
 benchmark:
   source: file
   path: ./input/bm/{Trading_day}.dat

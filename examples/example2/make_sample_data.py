@@ -16,7 +16,7 @@ calendar.dat がなければそれだけを作る（本番の calendar.dat は�
     input/calendar.dat                カレンダー（本番と同じ形式。コメント行 + ヘッダー + 月次の行）
     input/alpha/{Base_month}.dat      シグナル（ヘッダー "#bid comp_ew"、スペース区切り）
     input/bm/{Base_month}.dat         ベンチマークウェイト（"# ..." のコメント行 + スペース区切り）
-    input/univ/{Base_month}.dat       ユニバース・ウェイト（bm と同じ形式）
+    input/univ/{Base_month}.dat       ユニバース（"# ..." のコメント行 + 1行1銘柄の ID）
     input/returns/{Base_month}.csv    リターン（サンプル専用。その月の realized 月次リターン）
 """
 
@@ -67,6 +67,12 @@ def write_weights(path: Path, month: str, ids: np.ndarray, weights: np.ndarray) 
         f.writelines(f"{ids[i]} {weights[i]:.15E}\n" for i in order)
 
 
+def write_ids(path: Path, month: str, ids: np.ndarray) -> None:
+    with path.open("w") as f:
+        f.write(f"# format = id\n# date = {month}\n")
+        f.writelines(f"{i}\n" for i in ids)
+
+
 def write_returns(month: str, ids: np.ndarray, total: np.ndarray, specific: np.ndarray) -> None:
     pd.DataFrame({"bid": ids, "ret": total, "sret": specific}).to_csv(
         ROOT / "returns" / f"{month}.csv", index=False
@@ -108,7 +114,7 @@ def generate_all(rng: np.random.Generator) -> None:
         cap_t = cap[univ] * np.exp(0.1 * rng.standard_normal(univ.sum()))
         if month < FIRST.replace("-", ""):
             continue
-        write_weights(ROOT / "univ" / f"{month}.dat", month, ids[univ], cap_t / cap_t.sum())
+        write_ids(ROOT / "univ" / f"{month}.dat", month, ids[univ])
         top = np.argsort(-cap_t)[:BM_SIZE]
         bm_w = cap_t[top] / cap_t[top].sum()
         write_weights(ROOT / "bm" / f"{month}.dat", month, ids[univ][top], bm_w)

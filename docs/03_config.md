@@ -113,19 +113,27 @@ nri_code,ret,sret
 01346,0.13095565673423995,0.10822830159011734
 ```
 
-業種分類 `input/labels/20240530.csv`（該当する業種の列に 1 が立つ形式。[data.classification](#dataclassification)）
+業種分類 `input/labels/20240530.csv`（縦持ち。1行1銘柄で、`label` 列に業種コードが入る形式。[data.classification](#dataclassification)）
 
 ```text
-#nri_code,L001,L002,L003,L004,L005,L006,L007,L008,L009,L010
-01346,0,0,0,0,1,0,0,0,0,0
+#nri_code,label
+01346,L005
 ```
 
-ユニバース `input/univ/20240531.dat`（`#` で始まるコメント行のあとに、銘柄コードとウェイトがタブ区切りで並ぶ。[5. universe / benchmark](#5-universe--benchmark)）
+ユニバース `input/univ/20240531.dat`（`#` で始まるコメント行のあとに、銘柄コードが1行に1つ並ぶ。[5. universe / benchmark](#5-universe--benchmark)）
+
+```text
+# format = code
+# date = 20240531
+01346
+```
+
+ベンチマーク `input/bm/20240531.dat`（`#` で始まるコメント行のあとに、銘柄コードとウェイトがタブ区切りで並ぶ）
 
 ```text
 # format = weight
 # date = 20240531
-01346	0.000294123
+07079	0.185375
 ```
 
 ### 自分のデータで config を書く手順
@@ -372,7 +380,7 @@ role は、列の意味を表す内部の名前です。ソースごとに異な
 |---|---|
 | `data.signals`、`returns` | `asset_id` |
 | `data.classification` | `asset_id`、`category`（`one_hot: true` なら `asset_id` だけ） |
-| `universe` | `asset_id`（`weight` は任意） |
+| `universe` | `asset_id`（`weight` も書けるが使わない。[5 章](#5-universe--benchmark)） |
 | `benchmark` | `asset_id`、`weight` |
 | `risk_models.*.exposures`、`risk_models.*.specific_risk` | `asset_id` |
 | `risk_models.*.factor_covariance` | `factor` |
@@ -413,22 +421,36 @@ data:
 ### data.classification
 
 業種などの分類です。`category_ic` など、カテゴリ別の metric に必要です。共通の項目に加えて `one_hot` を持ちます。
+ファイルの持ち方は、縦持ち（1行1銘柄で、分類の列にカテゴリの値が入る）と one-hot（カテゴリごとに 0/1 の列がある）のどちらにも対応しています。
 
 | キー | 型 | 既定値 | 説明 |
 |---|---|---|---|
-| `one_hot` | 真偽値 | `false` | `true` なら、`asset_id` 以外のすべての列を 0/1 の列とみなし、1 が立っている列名をカテゴリにします |
+| `one_hot` | 真偽値 | `false` | `false` なら縦持ち（`columns` の `category` に対応づけた列の値をカテゴリにする）。`true` なら one-hot（`asset_id` 以外のすべての列を 0/1 の列とみなし、1 が立っている列名をカテゴリにする） |
+
+縦持ち（example1）:
 
 ```yaml
 data:
   classification:
     source: file
-    path: ./input/labels/{Label2}.csv        # 列は nri_code, L001, ..., L010
+    path: ./input/labels/{Label2}.csv        # 列は nri_code, label（値は L001 など）
+    columns: {asset_id: nri_code, category: label}
+```
+
+one-hot:
+
+```yaml
+data:
+  classification:
+    source: file
+    path: ./input/labels/{Label2}.csv        # 列は nri_code, L001, ..., L010（0/1）
     columns: {asset_id: nri_code}
     one_hot: true
 ```
 
-- `one_hot: false`（既定）のときは、`columns` に `category` を指定します（例: `{asset_id: code, category: gics_sector}`）。
+- 縦持ち（`one_hot: false`、既定）のときは、`columns` に `category` を指定します。
 - `one_hot: true` のとき、どの列も立っていない銘柄のカテゴリは欠損になり、1銘柄に複数の列が立っているとエラーになります。
+- どちらで読んでも、DataBundle の `classification` は同じ形（`category` 列にカテゴリの値）になります。
 
 ## 5. universe / benchmark
 
@@ -436,18 +458,28 @@ data:
 
 | セクション | 役割 | 必要な role |
 |---|---|---|
-| `universe` | シグナルを、ここにある（日付, 銘柄）に絞ります | `asset_id`。`weight` を指定すると、`benchmark` がないときにベンチマークウェイトとしても使います |
-| `benchmark` | ベンチマークウェイト。`universe` の `weight` より優先されます | `asset_id`、`weight` |
+| `universe` | シグナルを、ここにある（日付, 銘柄）に絞ります。使うのは銘柄だけです | `asset_id` |
+| `benchmark` | ベンチマークウェイト。ベンチマークを使う metric（ベンチマーク対比の超過リターンなど）に必要です | `asset_id`、`weight` |
 
 ```yaml
 universe:
   source: file
   path: ./input/univ/{Trading_day}.dat
+  read_options: {sep: "\t", comment: "#", header: null, usecols: [0], names: [nri_code]}
+  columns: {asset_id: nri_code}
+
+benchmark:
+  source: file
+  path: ./input/bm/{Trading_day}.dat
   read_options: {sep: "\t", comment: "#", header: null, names: [nri_code, weight]}
   columns: {asset_id: nri_code, weight: weight}
 ```
 
+- ユニバースのファイルは、銘柄の列だけを持つ形が基本です。ウェイトなどほかの列があっても構いません（使いません）。
+- ヘッダーのないファイルでは、上の例のように `read_options` に `usecols: [0]` と `names: [nri_code]` を書くと1列目だけを読むので、銘柄だけのファイルと、2列目にウェイトがある旧形式のファイルのどちらも読めます。
 - ユニバースで絞るのはシグナルだけです。分類・リターン・ベンチマークウェイトは絞りません。
+- **ベンチマークウェイトは `benchmark` からだけ読みます。** `benchmark` を書かなければベンチマークウェイトはなく、ベンチマークを使う metric（`requires` に `benchmark_weights` を持つもの）は計算前の検証でエラーになります（`` requires data that is not configured: ['benchmark_weights'] (set `benchmark`) ``）。ユニバースのウェイトで代わりにすることはしません（ベンチマークを指定し忘れたときに、意図しないウェイトでベンチマーク対比の結果が計算されるのを防ぐため）。
+- 以前の版では、`universe.columns` に `weight` を書くと、`benchmark` がないときにそのウェイトをベンチマークとして使っていました。互換のため、`universe.columns` の `weight` は今もエラーにはしませんが、使わずに警告（`` universe.columns: `weight` is ignored ... ``）を出します。そのウェイトをベンチマークにしたい場合は、同じファイルを `benchmark` に指定してください（`path`・`read_options` は同じで、`columns` に `asset_id` と `weight` を書きます）。
 - 現在の組み込み metric は、ベンチマークウェイトを使いません。読み込んだウェイトは DataBundle に入り、追加した metric から使えます（[05 の 5 章](05_adding_metrics.md#5-databundle-の使い方)）。
 
 ## 6. returns
@@ -896,7 +928,7 @@ YAML として読めないファイルと、トップレベルがマッピング
 | `aggregation.cumulative` のキーが未定義の系列名 | `metrics[quantile]: aggregation.cumulative: unknown return series ['specific']; available: ['total']` |
 | `aggregation.cumulative` の値が違う | `metrics[quantile].params.aggregation.cumulative.total: Input should be 'cumprod' or 'cumsum'` |
 | metric の `horizons` がトップレベルにない | `metrics[ic]: horizons [12] are not in the configured horizons [1, 3, 6]` |
-| metric に必要なデータが config にない | `metrics[category_ic]: requires data that is not configured: ['classification']` |
+| metric に必要なデータが config にない | `` metrics[category_ic]: requires data that is not configured: ['classification'] (set `data.classification`) `` |
 | metric が未定義のリスクモデルを指している | `metrics[factor_correlation]: unknown risk_model 'barra'; available: []` |
 | `output.by_date` の日付が評価期間にない | `output.by_date: dates ['20100131'] are not in the evaluation period (20190329..20260731, 89 dates)` |
 | 日付ごとのファイルが足りない | `data.signals[0]: 89 of 89 files not found: .../20190328.csv, ... (and 86 more)` |
@@ -910,11 +942,10 @@ YAML として読めないファイルと、トップレベルがマッピング
 `no column is mapped to required role(s)` に出る role が `date` の場合は、単一ファイルか DB のソースに `date` の指定がありません。
 `category` の場合は、分類のソースに `category` の指定も `one_hot: true` もありません。
 role 名を書き間違えた場合（例: `asset_id` を `asset`）も、必要な role がないものとして同じエラーになります。
-ただし、任意の role である `universe` の `weight` を書き間違えた場合はエラーにならず、ユニバースのウェイトがベンチマークウェイトとして使われないだけになります。
 
 role の対応の確認はファイルを読まずに行うので、`--skip-files` でも行います。列名の確認は、データファイルがすべてそろっているときに、ソースごとに評価に使う最初のファイルの見出しだけを読んで行います（`--skip-files` では省きます）。DB のソースは、role の対応だけを確認します（列名は SQL を実行しないと分からないため）。
 
-`requires data that is not configured` に出る名前と config の対応は、`signals` が `data.signals`、`classification` が `data.classification`、`forward_returns` が `returns` です。
+`requires data that is not configured` には、足りないデータの名前と、それを用意するために書く config の項目（`set ...`）が出ます。対応は、`signals` が `data.signals`、`classification` が `data.classification`、`forward_returns` が `returns`、`benchmark_weights` が `benchmark`、`risk_models.<構成要素>` が `risk_models.<モデル名>.<構成要素>` です。
 
 ### 検証を通っても実行時に出るエラー
 
@@ -959,6 +990,7 @@ DB を使う場合に出るもの（検証は環境変数が設定されてい�
 | `'total' period returns: N values outside [-1, 10] treated as missing (e.g. [...])` | `valid_range` の外の値を欠損にしました。例に出た値を確認してください。`db` と `barra` のソースでは `period returns` の部分が `daily returns` になります |
 | `Only 47% of signal rows have 'total' forward returns (h=1); check that asset_id formats match across sources` | シグナルとリターンで銘柄が半分も一致していません。銘柄コードの体系や書式が違う可能性があります |
 | `risk_models.<モデル名>.specific_return is not set` | リスクモデルに対応するスペシフィックリターンの系列が指定されていません |
+| `` universe.columns: `weight` is ignored; the universe only selects assets. ... `` | `universe.columns` に `weight` を書いていますが、ユニバースは銘柄の絞り込みにだけ使うので、そのウェイトは使いません。ベンチマークにしたい場合は同じファイルを `benchmark` に指定し、`universe.columns` から `weight` を消してください（[5 章](#5-universe--benchmark)）。`validate` でも出ます |
 
 ## 12. 付録: すべての項目を載せた例
 
@@ -970,5 +1002,5 @@ Barra から読む書き方は、[examples/config.full.yaml](../examples/config.
 
 | ファイル | 内容 |
 |---|---|
-| [examples/example1/config.example.yaml](../examples/example1/config.example.yaml) | 日付キーが8桁の日付（`Base_day`）、one-hot の業種分類、ユニバースのウェイトをベンチマークとして使う例 |
+| [examples/example1/config.example.yaml](../examples/example1/config.example.yaml) | 日付キーが8桁の日付（`Base_day`）、縦持ちの業種分類、銘柄だけのユニバースと別ファイルのベンチマーク |
 | [examples/example2/config.example.yaml](../examples/example2/config.example.yaml) | 日付キーが6桁の月（`Base_month`）、シグナルソースが1つ、ベンチマークを別ファイルで指定する例 |

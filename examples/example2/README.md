@@ -15,8 +15,8 @@ uv run alpha-eval run examples/example2/config.example.yaml  # examples/example2
 |---|---|---|
 | `input/calendar.dat` | カレンダー | 本番と同じ形式。先頭のコメント行 + `#Base_month Monthend Trading_month Rskmdl_month Label1 Label2`（タブ区切り、将来の月まで） |
 | `input/alpha/{Base_month}.dat` | シグナル | ヘッダー `#bid comp_ew`、スペース区切り |
-| `input/univ/{Base_month}.dat` | ユニバース | `# format = weight` 等のコメント行 + ID・ウェイトのスペース区切り |
-| `input/bm/{Base_month}.dat` | ベンチマークウェイト | univ と同じ形式 |
+| `input/univ/{Base_month}.dat` | ユニバース | `# format = id` 等のコメント行 + 1行1銘柄の ID（ウェイト列のある旧形式も config のまま読める） |
+| `input/bm/{Base_month}.dat` | ベンチマークウェイト | `# format = weight` 等のコメント行 + ID・ウェイトのスペース区切り |
 | `input/returns/{Base_month}.csv` | リターン | サンプル専用（その月の realized 月次リターン） |
 
 ## 実データで試す

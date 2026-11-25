@@ -52,7 +52,7 @@ csv / parquet は残らない（`report.xlsx` は今回 xlsx を書いたとき�
 
 サンプル（いずれも合成データを生成して評価する）:
 
-- [examples/example1](examples/example1): 日次の日付キー（`{Label2}` 等）・one-hot の業種分類
+- [examples/example1](examples/example1): 日次の日付キー（`{Label2}` 等）・縦持ちの業種分類・ベンチマーク別ファイル
 - [examples/example2](examples/example2): 月次（`YYYYMM`）・BARRA 形式の ID・ベンチマーク別ファイル
 
 ```sh
@@ -102,9 +102,11 @@ InformationCoefficient(method="pearson").compute(bundle)
 - CSV ヘッダー先頭の `#`（`#nri_code`）は除去され、銘柄コードは文字列のまま読む（先頭ゼロを保つ）。
   ヘッダーなし・コメント行付きのファイルは `read_options`（`header: null`, `names`, `comment: "#"` 等）で読む。
 - シグナルの `values` はリスト、または `{シグナル名: 列名}`（ソース間で列名が同じ場合）。
-- 業種分類が one-hot（`L001`〜`L010` 等）の場合は `one_hot: true`。
+- 業種分類は縦持ち（`columns` の `category` に分類の列）と one-hot（`L001`〜`L010` 等の 0/1 の列。`one_hot: true`）の両方に対応。
 - ベンチマークウェイトは `benchmark`（`columns` に `asset_id` と `weight`）で指定する。
-  省略時はユニバースの `columns` に `weight` があればそれを使う。
+  省略するとベンチマークウェイトはなく、`benchmark_weights` を要求する metric は計算前の検証でエラーになる。
+- ユニバース（`universe`）は銘柄の絞り込みにだけ使う（必要な role は `asset_id`）。互換のため `columns` に
+  `weight` を書いても通るが、使わずに警告を出す（ベンチマークにはしない）。
 - リターンは名前付き系列の集合で、系列名は自由（`total` / `specific` 以外も可）。複数期間の束ね方は系列ごとに
   `aggregation` で指定する（`cumprod` = 複利、`cumsum` = 加算）。
 - リターンのソースの `valid_range`（既定 `[-1, 10]` = -100% 〜 +1000%）の外の値は、DB の特殊値などの

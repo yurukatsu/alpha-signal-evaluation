@@ -342,12 +342,12 @@ metric のクラスは、基底クラス `Metric`（`metrics/base.py`）を継�
 | `classification` | `data.classification` | `data.classification` がある |
 | `risk_models` | `data.risk_models`（全構成要素） | `risk_models` がある |
 | `risk_models.exposures` / `risk_models.factor_covariance` / `risk_models.specific_risk` / `risk_models.factor_returns` | リスクモデルのその構成要素だけ | `risk_models` にその構成要素がある |
-| `benchmark_weights` | `data.benchmark_weights` | `benchmark` がある、または `universe.columns` に `weight` がある |
+| `benchmark_weights` | `data.benchmark_weights` | `benchmark` がある（`universe` のウェイトでは代わりにしない） |
 | `portfolio_weights` | `data.portfolio_weights` | 未実装（config から用意する方法がありません。宣言した metric を config から実行すると必ず検証エラーになり、契約テストも通りません。未実装の項目の一覧は [02_features.md の 9 章](02_features.md#9-現時点でできないこと未実装)） |
 
 `requires` は2か所で使われます。
 
-- 計算前の検証: config で用意されていないデータを要求すると、`metrics[<キー>]: requires data that is not configured: ['classification']` のようなエラーになります。
+- 計算前の検証: config で用意されていないデータを要求すると、`` metrics[<キー>]: requires data that is not configured: ['classification'] (set `data.classification`) `` のようなエラーになります。ベンチマーク対比の超過リターンのように、ベンチマークがないと意味のない metric は `benchmark_weights` を宣言しておけば、`benchmark` を書いていない config ではこのエラーで止まり、計算されません。
 - 契約テスト: 宣言していないデータを空にした `DataBundle` が渡されます。宣言を忘れたデータを使っているとテストが失敗します。
 
 「あれば使う」任意のデータは `requires` に書かず、`compute` の中で有無を確認します（組み込みの `factor_correlation` は `if data.risk_models:` のようにしてリスクモデルを任意で使っています）。

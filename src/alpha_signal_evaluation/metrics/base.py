@@ -170,6 +170,25 @@ class MetricResult:
     notes: list[str] = field(default_factory=list)  # レポートに載せる注記
 
 
+# requires の名前 → それを用意する config の項目（検証エラーで案内する）
+_CONFIG_SECTIONS = {
+    "signals": "data.signals",
+    "classification": "data.classification",
+    "forward_returns": "returns",
+    "benchmark_weights": "benchmark",
+    "risk_models": "risk_models",
+}
+
+
+def _config_hint(name: str) -> str:
+    """``requires`` の名前を用意するために書く config の項目の案内文。"""
+    if name == "portfolio_weights":
+        return "portfolio_weights cannot be configured yet"
+    if name.startswith("risk_models."):
+        return f"set `risk_models.<model>.{name.split('.', 1)[1]}`"
+    return f"set `{_CONFIG_SECTIONS.get(name, name)}`"
+
+
 class Metric(ABC):
     """全 metric の抽象基底クラス。
 
@@ -301,7 +320,8 @@ class Metric(ABC):
         errors = []
         missing = cls.requires - spec.provides
         if missing:
-            errors.append(f"requires data that is not configured: {sorted(missing)}")
+            hints = ", ".join(_config_hint(name) for name in sorted(missing))
+            errors.append(f"requires data that is not configured: {sorted(missing)} ({hints})")
         signals = getattr(params, "signals", None)
         if signals is not None and (unknown := set(signals) - set(spec.signals)):
             errors.append(f"unknown signals {sorted(unknown)}; available: {list(spec.signals)}")

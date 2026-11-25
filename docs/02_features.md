@@ -106,8 +106,8 @@ output/
 | シグナル | `data.signals` | 評価対象のスコア。複数のソースを並べられる | 必須 | file / db |
 | リターン | `returns` | フォワードリターンの元になる系列。系列ごとに名前と束ね方（`aggregation`）を持つ | リターンを使う metric には必須 | file / db / barra |
 | 業種分類 | `data.classification` | カテゴリ別の metric（`category_ic` など） | 任意 | file / db |
-| ユニバース | `universe` | シグナルを評価対象の (日付, 銘柄) に絞る | 任意 | file / db |
-| ベンチマークウェイト | `benchmark` | `DataBundle.benchmark_weights` に入る。省略時は、ユニバースの `columns` で role の `weight` に列を対応づけていれば、その列を使う | 任意 | file / db |
+| ユニバース | `universe` | シグナルを評価対象の (日付, 銘柄) に絞る。使うのは銘柄だけ（ウェイトの列があっても使わない） | 任意 | file / db |
+| ベンチマークウェイト | `benchmark` | `DataBundle.benchmark_weights` に入る。省略するとベンチマークウェイトはなく、ベンチマークを使う metric は計算前の検証でエラーになる（ユニバースのウェイトでは代わりにしない） | ベンチマークを使う metric には必須 | file / db |
 | リスクモデル | `risk_models.<名前>` | エクスポージャー、ファクター共分散、スペシフィックリスク、ファクターリターンを1モデル分まとめる | 任意 | file / db / barra |
 
 - リターン系列の名前は自由に付けられます（`total`、`specific`、`excess`、`usd_total` など）。名前によって計算は変わらず、期間をまたぐ束ね方は系列ごとの `aggregation` で決まります（[4.4](#44-フォワードリターンの定義)）。
@@ -182,6 +182,7 @@ example1 の config では、行 `20240531` に次のファイルが対応しま
 | シグナル `ai` | `./input/alpha/ai/{Label2}.csv` | `input/alpha/ai/20240530.csv` |
 | 業種分類 | `./input/labels/{Label2}.csv` | `input/labels/20240530.csv` |
 | ユニバース | `./input/univ/{Trading_day}.dat` | `input/univ/20240531.dat` |
+| ベンチマーク | `./input/bm/{Trading_day}.dat` | `input/bm/20240531.dat` |
 | リターン | `./input/returns/{Base_day}.csv` | `input/returns/20240531.csv`（この行までに実現したリターン。[4.3](#43-conventionrealized--forward)） |
 
 シグナルをいつ時点の情報で作り、いつ売買する想定にするかは、このようにカレンダーの列とファイルの対応で利用者が決めます。

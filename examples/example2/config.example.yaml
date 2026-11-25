@@ -24,8 +24,9 @@ data:
 
 universe:
   source: file
-  path: ./input/univ/{Base_month}.dat           # "# ..." のコメント行 + ID・ウェイトのスペース区切り
-  read_options: {sep: '\s+', comment: "#", header: null, names: [bid, weight]}
+  path: ./input/univ/{Base_month}.dat           # "# ..." のコメント行 + 1行1銘柄の ID
+  # 1列目（銘柄）だけを読む。2列目にウェイトがある旧形式のファイルもそのまま読める
+  read_options: {sep: '\s+', comment: "#", header: null, usecols: [0], names: [bid]}
   columns: {asset_id: bid}
 
 benchmark:

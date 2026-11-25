@@ -177,7 +177,7 @@ metrics:
 | `data.return_aggregations[returns]` | そのリターン系列の束ね方。"cumprod"（複利）または "cumsum"（加算）。期間集約、フォワードリターン、1期間あたりへの換算に使われ、累積リターンの既定にもなる |
 | `data.forward_returns[returns][horizon]` | フォワードリターンの wide 形式。index=date、columns=asset_id（通常は aligned を使う） |
 | `data.classification` | 銘柄の分類。index=(date, asset_id)、columns=["category", ...]（config の分類ソースにある他の列も、元の列名のまま入る）。設定がなければ None |
-| `data.benchmark_weights` | ベンチマークウェイト。index=(date, asset_id)（一意。日付は `data.dates` の範囲内）、columns=["weight"]。ソースの値のままで、ユニバースでは絞られない（シグナルのない銘柄の行も含む）。日付ごとの合計が 1 とは限らず、0・欠損・負の値も検証されずに入りうる。設定がなければ None |
+| `data.benchmark_weights` | ベンチマークウェイト。index=(date, asset_id)（一意。日付は `data.dates` の範囲内）、columns=["weight"]。ソースの値のままで、ユニバースでは絞られない（シグナルのない銘柄の行も含む）。日付ごとの合計が 1 とは限らず、0・欠損・負の値も検証されずに入りうる。config の `benchmark` からだけ作られ（ユニバースのウェイトは使わない）、設定がなければ None |
 | `data.risk_model(name)` | `(リスクモデル名, RiskModelData)` を返す。name が None のときは、リスクモデルが1つだけならそれを返す（0個または複数なら ValueError） |
 
 RiskModelData の属性（どれも、設定されていなければ None または空）:
