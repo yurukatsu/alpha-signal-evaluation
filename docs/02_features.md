@@ -40,8 +40,8 @@ metric は `DataBundle` だけを受け取り、時点をずらす処理を一�
 ```sh
 uv sync                                                        # 初回のみ
 uv run python examples/example1/make_sample_data.py           # examples/example1/input がない場合だけ実行する
-uv run alpha-eval validate examples/example1/config.example.yaml
-uv run alpha-eval run examples/example1/config.example.yaml
+uv run alpha-eval validate examples/example1/config.yaml
+uv run alpha-eval run examples/example1/config.yaml
 ```
 
 `validate` は計算せずに設定を確認します。example1 では警告が1件出ますが、エラーではありません（[4.9](#49-期間の末尾でリターンが足りない場合) を参照）。
@@ -541,7 +541,7 @@ metric を自作するための `Metric`・`MetricParams`・`MetricResult`・`Re
 from alpha_signal_evaluation import evaluate
 
 # example1 の config は n_jobs: 4。ここでは 1 を指定して順に実行する（並列にする場合は下の注意を参照）
-report = evaluate("examples/example1/config.example.yaml", n_jobs=1)
+report = evaluate("examples/example1/config.yaml", n_jobs=1)
 
 report["ic"].tables["summary"]    # metric のキーで結果を取り出す（tables は 表の名前 -> DataFrame）
 report["ic"].notes                # metric の注記
@@ -625,7 +625,7 @@ macOS では、これがないと子プロセスの起動に失敗して処理�
 from alpha_signal_evaluation import evaluate
 
 if __name__ == "__main__":
-    report = evaluate("examples/example1/config.example.yaml")   # config の execution.n_jobs（4）で並列に実行
+    report = evaluate("examples/example1/config.yaml")   # config の execution.n_jobs（4）で並列に実行
 ```
 
 ### 7.4 DB キャッシュ

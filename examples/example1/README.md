@@ -5,8 +5,8 @@
 
 ```sh
 uv run python examples/example1/make_sample_data.py          # examples/example1/input にサンプルデータを作る
-uv run alpha-eval validate examples/example1/config.example.yaml
-uv run alpha-eval run examples/example1/config.example.yaml  # examples/example1/output に結果を書き出す
+uv run alpha-eval validate examples/example1/config.yaml
+uv run alpha-eval run examples/example1/config.yaml  # examples/example1/output に結果を書き出す
 ```
 
 `example` / `barra-internal-check` ブランチには生成済みの `input/` があるので、最初の `make_sample_data.py` は不要
@@ -23,4 +23,5 @@ uv run alpha-eval run examples/example1/config.example.yaml  # examples/example1
 | `input/returns/{Base_day}.csv` | リターン | サンプル専用。本番は DB から日次で取得する（config のコメント参照） |
 
 実データで試す場合は、config のパスを input.zip の名前に合わせ、リターンを DB ソースに切り替える。
-`config.yaml` は `.gitignore` 対象なので、自分の設定は `config.example.yaml` をコピーして作る。
+サンプルの `config.yaml` は Git で管理している。自分の設定は別の場所（リポジトリ直下など）に `config.yaml` を作るか、
+このファイルをコピーして書き換える（`examples/` の外の `config.yaml` は `.gitignore` 対象なのでコミットされない）。

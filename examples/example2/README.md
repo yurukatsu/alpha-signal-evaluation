@@ -4,8 +4,8 @@
 
 ```sh
 uv run python examples/example2/make_sample_data.py          # examples/example2/input に合成データを作る
-uv run alpha-eval validate examples/example2/config.example.yaml
-uv run alpha-eval run examples/example2/config.example.yaml  # examples/example2/output に結果を書き出す
+uv run alpha-eval validate examples/example2/config.yaml
+uv run alpha-eval run examples/example2/config.yaml  # examples/example2/output に結果を書き出す
 ```
 
 `example` / `barra-internal-check` ブランチには生成済みの `input/` があるので、最初の `make_sample_data.py` は不要
@@ -26,7 +26,7 @@ uv run alpha-eval run examples/example2/config.example.yaml  # examples/example2
 
 ```sh
 uv run python examples/example2/make_sample_data.py --keep-data
-uv run alpha-eval run examples/example2/config.example.yaml
+uv run alpha-eval run examples/example2/config.yaml
 ```
 
 このときのリターンはシグナルと無関係な乱数なので、IC 等は 0 付近になる（パイプラインの動作確認用）。

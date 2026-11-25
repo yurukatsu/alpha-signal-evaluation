@@ -47,7 +47,7 @@ def sample(tmp_path_factory):
     spec.loader.exec_module(module)
     module.ROOT = root / "input"
     module.main()
-    shutil.copy(EXAMPLES / "config.example.yaml", root / "config.yaml")
+    shutil.copy(EXAMPLES / "config.yaml", root / "config.yaml")
     return root
 
 
@@ -149,7 +149,7 @@ def sample2(tmp_path_factory):
     example = EXAMPLES.parent / "example2"
     root = tmp_path_factory.mktemp("sample2")
     _run_generator(example / "make_sample_data.py", root / "input")
-    shutil.copy(example / "config.example.yaml", root / "config.yaml")
+    shutil.copy(example / "config.yaml", root / "config.yaml")
     return root
 
 

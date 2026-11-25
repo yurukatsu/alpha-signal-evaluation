@@ -228,6 +228,8 @@ CLAUDE.md
 
 # Configulation
 config.yaml
+# サンプルの config（examples/<名前>/config.yaml）は追跡する
+!examples/*/config.yaml
 
 # 社内の入力データ・ライブラリ（公開リポジトリに含めない）
 input.zip

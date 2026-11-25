@@ -992,7 +992,7 @@ def load_config(path: str | Path) -> EvaluationConfig:
             相互参照の誤り等）。
 
     Examples:
-        >>> cfg = load_config("examples/example1/config.example.yaml")  # doctest: +SKIP
+        >>> cfg = load_config("examples/example1/config.yaml")  # doctest: +SKIP
         >>> [m.key for m in cfg.enabled_metrics]  # doctest: +SKIP
     """
     path = Path(path).expanduser().resolve()

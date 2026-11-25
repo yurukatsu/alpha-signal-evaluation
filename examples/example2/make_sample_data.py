@@ -1,10 +1,10 @@
-"""config.example.yaml 用のサンプルデータを examples/example2/input に作る。
+"""config.yaml 用のサンプルデータを examples/example2/input に作る。
 
 月次（ファイル名が YYYYMM）・BARRA 形式の ID のデータと同じ形式の合成データを作る。
 値はすべて乱数で、実在の銘柄・スコアとは無関係。
 
     uv run python examples/example2/make_sample_data.py
-    uv run alpha-eval run examples/example2/config.example.yaml
+    uv run alpha-eval run examples/example2/config.yaml
 
 手元の実データ（alpha / bm / univ / calendar.dat）で試す場合は、それらを input に置いて
 ``--keep-data`` を付ける。実データには触れず、合成リターン（純粋な乱数）と、

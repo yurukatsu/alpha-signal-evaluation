@@ -116,7 +116,7 @@ metric の結果は、次の3つで構成されます。
 
 `<キー>` は [1.1](#11-config-での指定方法) で説明した実行のキー（`id`、なければ `name`）です。出力先と形式（csv / parquet / xlsx）の指定は [03 の 9 章 output](03_config.md#output) を参照してください。
 
-example1 を同梱の `config.example.yaml` のまま実行したときの出力の一部です。
+example1 を同梱の `config.yaml` のまま実行したときの出力の一部です。
 
 ```text
 output/
@@ -491,7 +491,7 @@ summary のキー: `{signal}/{returns}/h{horizon}/mean_ic` と `.../spread_per_p
 
 **読み方と注意点**
 
-- ホライズン間で spread を比べるときは `spread_per_period` を使います。`mean_spread` は h 期間分のリターンなので、h が大きいほど大きくなるのが普通です。下は、example1 を同梱の `config.example.yaml` のまま実行したときの `ai` × `total` の結果です（同梱の config は `alpha_decay` に `params` を書いていないので、`n_quantiles` は既定の 5 です）。`mean_spread` は増えていますが、1期間あたりでは減っています。
+- ホライズン間で spread を比べるときは `spread_per_period` を使います。`mean_spread` は h 期間分のリターンなので、h が大きいほど大きくなるのが普通です。下は、example1 を同梱の `config.yaml` のまま実行したときの `ai` × `total` の結果です（同梱の config は `alpha_decay` に `params` を書いていないので、`n_quantiles` は既定の 5 です）。`mean_spread` は増えていますが、1期間あたりでは減っています。
 
   | horizon | mean_ic | mean_spread | spread_per_period |
   |---|---|---|---|
@@ -611,7 +611,7 @@ summary のキー: シグナル同士の組について `{a}/{b}/mean_corr`。�
     params: {method: pearson, include_exposures: false}
 ```
 
-リスクモデルのスタイルファクターとの相関も見る場合。config の `risk_models` に、エクスポージャーを持つモデルを定義しておく必要があります（書き方は [03 の 7 章](03_config.md#7-risk_models)）。次の `jpe4` は、config の `risk_models` に定義したモデルの名前の例です。リスクモデルを定義していない config（example1 の `config.example.yaml` など）に書くと、`unknown risk_model 'jpe4'` のエラーになります。
+リスクモデルのスタイルファクターとの相関も見る場合。config の `risk_models` に、エクスポージャーを持つモデルを定義しておく必要があります（書き方は [03 の 7 章](03_config.md#7-risk_models)）。次の `jpe4` は、config の `risk_models` に定義したモデルの名前の例です。リスクモデルを定義していない config（example1 の `config.yaml` など）に書くと、`unknown risk_model 'jpe4'` のエラーになります。
 
 ```yaml
   - name: factor_correlation

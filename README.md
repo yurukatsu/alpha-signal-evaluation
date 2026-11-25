@@ -56,7 +56,7 @@ csv / parquet は残らない（`report.xlsx` は今回 xlsx を書いたとき�
 - [examples/example2](examples/example2): 月次（`YYYYMM`）・BARRA 形式の ID・ベンチマーク別ファイル
 
 ```sh
-uv run python examples/example1/make_sample_data.py && uv run alpha-eval run examples/example1/config.example.yaml
+uv run python examples/example1/make_sample_data.py && uv run alpha-eval run examples/example1/config.yaml
 ```
 
 `example` / `barra-internal-check` ブランチには生成済みの input があるので、そのまま `alpha-eval run` できる
@@ -91,8 +91,8 @@ InformationCoefficient(method="pearson").compute(bundle)
 
 ## config.yaml
 
-書ける項目をすべて載せた例（コメント付き）は [examples/config.full.yaml](examples/config.full.yaml)、
-動く例は [examples/example1/config.example.yaml](examples/example1/config.example.yaml) を参照。要点:
+書ける項目をすべて載せた例（コメント付き）は [examples/config.full.example.yaml](examples/config.full.example.yaml)、
+動く例は [examples/example1/config.yaml](examples/example1/config.yaml) を参照。要点:
 
 - **カレンダー**（例: `calendar.dat`、1行 = 1評価期間）が時間軸の唯一の定義。`horizons` の単位はカレンダーの行数。
   ヘッダー先頭の `#` は除去し、タブ・スペース・全角スペースが混在していても読める。

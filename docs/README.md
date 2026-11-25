@@ -35,8 +35,8 @@ alpha-signal-evaluation は、株式のアルファシグナル（銘柄ごと�
 ```sh
 uv sync                                                        # 依存パッケージを入れる
 uv run python examples/example1/make_sample_data.py            # サンプルデータを作る（input/ が既にあれば不要）
-uv run alpha-eval validate examples/example1/config.example.yaml   # 計算せずに設定を検証する
-uv run alpha-eval run examples/example1/config.example.yaml        # 評価して examples/example1/output に書き出す
+uv run alpha-eval validate examples/example1/config.yaml   # 計算せずに設定を検証する
+uv run alpha-eval run examples/example1/config.yaml        # 評価して examples/example1/output に書き出す
 ```
 
 `examples/example1/output/` に、metric ごとのディレクトリ（`ic/`、`quantile/` など）と、全体の要約 `summary.csv`、実行の記録 `run_info.json` ができます。出力の見方は [02 の 6 章](02_features.md#6-出力) を参照してください。

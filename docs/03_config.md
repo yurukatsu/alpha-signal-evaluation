@@ -81,7 +81,7 @@ uv run alpha-eval run examples/example1/config.min.yaml        # 評価して結
 `nri_code` は社内の銘柄コードで、example1 のファイルでは銘柄コードの列名にもなっています。config で必須の名前ではありません。
 自分のデータで銘柄コードの列が `code` なら、`columns: {asset_id: code}` と書きます（[columns: role と実カラム名の対応](#columns-role-と実カラム名の対応)）。
 
-config が指しているファイルの中身を、example1 の同梱の config（`config.example.yaml`）が使うものも含めて示します。
+config が指しているファイルの中身を、example1 の同梱の config（`examples/example1/config.yaml`）が使うものも含めて示します。
 各ファイルの先頭2行です（ユニバースは先頭2行がコメントなので3行）。カレンダーの `Base_day` が `20240531` の行は、
 `Trading_day` が `20240531`、`Label2` が `20240530` です。この行には、下の `20240530.csv` や `20240531.csv` が対応します。
 
@@ -651,7 +651,7 @@ risk_models:
   日付ごとに正方行列になっていなければエラーになります。値は換算しないので、年率の小数の2乗で用意します。
 - `factor_returns` を `db` で読む場合は `match_on` が必須で、日次の値を期間に加算で集約します。
 - `specific_return` を書かないと、実行時に `risk_models.<モデル名>.specific_return is not set` という警告が出ます。
-- example1 と example2 には、リスクモデルのファイルは含まれていません。上の例のパスは `examples/config.full.yaml` のものです。
+- example1 と example2 には、リスクモデルのファイルは含まれていません。上の例のパスは `examples/config.full.example.yaml` のものです。
 
 ### source: barra のリスクモデル
 
@@ -994,13 +994,13 @@ DB を使う場合に出るもの（検証は環境変数が設定されてい�
 
 ## 12. 付録: すべての項目を載せた例
 
-[examples/config.full.yaml](../examples/config.full.yaml) は、config に書ける項目をすべて載せたコメント付きの例です。
+[examples/config.full.example.yaml](../examples/config.full.example.yaml) は、config に書ける項目をすべて載せたコメント付きの例です。
 省略できる項目には、省略時の値が書いてあります。パスや SQL ファイルは説明用のもので、そのままでは実行できません。
 
 実行できる例は次の2つで、どちらも合成データ（各ディレクトリの `make_sample_data.py` で作る）で動きます。
-Barra から読む書き方は、[examples/config.full.yaml](../examples/config.full.yaml) と、上の 6 章・7 章の `source: barra` の例を参照してください（社内 DB に接続できる環境と実データが必要です）。
+Barra から読む書き方は、[examples/config.full.example.yaml](../examples/config.full.example.yaml) と、上の 6 章・7 章の `source: barra` の例を参照してください（社内 DB に接続できる環境と実データが必要です）。
 
 | ファイル | 内容 |
 |---|---|
-| [examples/example1/config.example.yaml](../examples/example1/config.example.yaml) | 日付キーが8桁の日付（`Base_day`）、縦持ちの業種分類、銘柄だけのユニバースと別ファイルのベンチマーク |
-| [examples/example2/config.example.yaml](../examples/example2/config.example.yaml) | 日付キーが6桁の月（`Base_month`）、シグナルソースが1つ、ベンチマークを別ファイルで指定する例 |
+| [examples/example1/config.yaml](../examples/example1/config.yaml) | 日付キーが8桁の日付（`Base_day`）、縦持ちの業種分類、銘柄だけのユニバースと別ファイルのベンチマーク |
+| [examples/example2/config.yaml](../examples/example2/config.yaml) | 日付キーが6桁の月（`Base_month`）、シグナルソースが1つ、ベンチマークを別ファイルで指定する例 |

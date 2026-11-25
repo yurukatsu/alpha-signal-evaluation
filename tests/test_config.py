@@ -215,10 +215,10 @@ def test_removed_kind_key_tells_how_to_rewrite(kind):
 
 
 def test_full_reference_config_is_valid():
-    """examples/config.full.yaml（全項目の例）がスキーマと metric のパラメータに合っていること。"""
+    """examples/config.full.example.yaml（全項目の例）がスキーマと metric のパラメータに合う。"""
     from alpha_signal_evaluation.validation import spec_from_config, validate_metrics
 
-    path = Path(__file__).parents[1] / "examples" / "config.full.yaml"
+    path = Path(__file__).parents[1] / "examples" / "config.full.example.yaml"
     cfg = load_config(path)
     # enabled: false の metric も含めてパラメータを検証する
     assert validate_metrics(cfg.metrics, spec_from_config(cfg)) == []

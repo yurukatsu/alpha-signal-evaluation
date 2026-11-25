@@ -98,7 +98,7 @@ metric はデータの結合と集計だけを行います。データの読み�
 
 例として「シグナル上位の銘柄の超過リターン」を追加します。日付ごとに、シグナル上位 `top_pct` % の銘柄のフォワードリターンの等ウェイト平均から、全銘柄の平均を引いたものです。
 
-この metric はこのマニュアルのための例で、リポジトリには含まれていません。試す場合は、次の内容を `src/alpha_signal_evaluation/metrics/top_pct_excess.py` として保存します。試し終えたら、このファイルと、後で作る `examples/example1/config.yaml` を削除してください（置いたままにすると `top_pct_excess` が登録されたままになります）。
+この metric はこのマニュアルのための例で、リポジトリには含まれていません。試す場合は、次の内容を `src/alpha_signal_evaluation/metrics/top_pct_excess.py` として保存します。試し終えたら、このファイルを削除し、後で `examples/example1/config.yaml` に追加する行も消してください（`git checkout examples/example1/config.yaml` で元に戻せます。ファイルを置いたままにすると `top_pct_excess` が登録されたままになります）。
 
 ### ファイルの全文
 
@@ -240,7 +240,7 @@ top_pct_excess  Excess forward return of the top X% assets by signal over the un
 
 ### config に書いて実行する
 
-`examples/example1/config.example.yaml` を `examples/example1/config.yaml` にコピーし、`metrics` の末尾に次を追加します（`examples/example1/input` がない場合は、先に `uv run python examples/example1/make_sample_data.py` でサンプルデータを作ります）。同じ metric を設定を変えて複数回使う場合は、2つ目以降に一意な `id` を付けます（[03_config.md の 8 章](03_config.md#8-metrics)）。
+`examples/example1/config.yaml` の `metrics` の末尾に次を追加します（`examples/example1/input` がない場合は、先に `uv run python examples/example1/make_sample_data.py` でサンプルデータを作ります）。同じ metric を設定を変えて複数回使う場合は、2つ目以降に一意な `id` を付けます（[03_config.md の 8 章](03_config.md#8-metrics)）。
 
 ```yaml
   - name: top_pct_excess
