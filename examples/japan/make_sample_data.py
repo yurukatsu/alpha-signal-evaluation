@@ -1,10 +1,10 @@
-"""config.yaml 用のサンプルデータを examples/example1/input に作る。
+"""config.yaml 用のサンプルデータを examples/japan/input に作る。
 
 社内の入力データ（input.zip）と同じファイル形式の合成データを作る（ディレクトリ名はわかりやすく変えている）。
 値はすべて乱数で、実在の銘柄・スコアとは無関係。
 
-    uv run python examples/example1/make_sample_data.py
-    uv run alpha-eval run examples/example1/config.yaml
+    uv run python examples/japan/make_sample_data.py
+    uv run alpha-eval run examples/japan/config.yaml
 
 作るファイル:
     input/calendar.dat            カレンダー（ヘッダー先頭 "#"、タブ区切り。末尾はスペース区切り）

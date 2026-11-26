@@ -1,4 +1,4 @@
-# サンプル設定。examples/example1/make_sample_data.py で作ったデータ（社内の input.zip と同じ形式）を評価する。
+# サンプル設定。examples/japan/make_sample_data.py で作ったデータ（社内の input.zip と同じ形式）を評価する。
 # 相対パスはこのファイルの場所を基準に解決される。
 version: 1
 

@@ -10,7 +10,7 @@
 
 シグナルは、「値が大きい銘柄ほど将来のリターンが高い」と予想する向きで評価します。予想が当たっていれば、IC と spread（上位 − 下位のリターン差）は正になります。
 
-例に出てくるシグナル名 `ai` / `dss`、リターン系列名 `total` / `specific`、カテゴリ `L001` などは、`examples/example1`（合成データのサンプル。動かし方は [02 の 2 章](02_features.md#2-5分で動かすexample1)）のものです。example1 のカレンダーは1行が1か月なので、ホライズン 1 は「1か月先まで」を意味します。
+例に出てくるシグナル名 `ai` / `dss`、リターン系列名 `total` / `specific`、カテゴリ `L001` などは、`examples/japan`（合成データのサンプル。動かし方は [02 の 2 章](02_features.md#2-5分で動かすjapan)）のものです。japan のカレンダーは1行が1か月なので、ホライズン 1 は「1か月先まで」を意味します。
 
 ## 1. 共通事項
 
@@ -69,7 +69,7 @@ metrics:
 | `cumprod` | 複利 | `(1 + r).cumprod() − 1` |
 | `cumsum` | 単純加算 | `r.cumsum()` |
 
-example1 の系列は、`total`（トータルリターン）が `cumprod`、`specific`（スペシフィックリターン。リスクモデルのファクターで説明されない、銘柄固有の部分）が `cumsum` です。
+japan の系列は、`total`（トータルリターン）が `cumprod`、`specific`（スペシフィックリターン。リスクモデルのファクターで説明されない、銘柄固有の部分）が `cumsum` です。
 
 系列の `aggregation` は、日次から期間への集約（`source: db` と `source: barra`。`source: file` は集約しません）、フォワードリターンの計算（[02 の 4.4](02_features.md#44-フォワードリターンの定義)）、`alpha_decay` の1期間あたりへの換算にも使います。`source: barra` の系列では `aggregation` を選べません。`series` の値で決まり、`total`（DRTN）は `cumprod`、`specific`（SRTN）は `cumsum` です（[03 の 6 章「source: barra のリターン」](03_config.md#source-barra-のリターン)）。
 
@@ -116,7 +116,7 @@ metric の結果は、次の3つで構成されます。
 
 `<キー>` は [1.1](#11-config-での指定方法) で説明した実行のキー（`id`、なければ `name`）です。出力先と形式（csv / parquet / xlsx）の指定は [03 の 9 章 output](03_config.md#output) を参照してください。
 
-example1 を同梱の `config.yaml` のまま実行したときの出力の一部です。
+japan を同梱の `config.yaml` のまま実行したときの出力の一部です。
 
 ```text
 output/
@@ -235,7 +235,7 @@ metric ごとに、計算方法・パラメータ・出力・読み方と注意�
 
 | 列 | 内容 |
 |---|---|
-| `date` | 日付キー（その行の、カレンダーの `calendar.index` の列の値。example1 では `20240531` のような8桁の日付）。他の metric の `date` 列も同じ |
+| `date` | 日付キー（その行の、カレンダーの `calendar.index` の列の値。japan では `20240531` のような8桁の日付）。他の metric の `date` 列も同じ |
 | `ic` | その日付の IC |
 | `n` | その日付の銘柄数（`min_obs` 未満でも出る。データが1件もない日付は欠損） |
 | `signal` / `returns` / `horizon` | どの組の値か |
@@ -307,7 +307,7 @@ summary のキー: spread について `{signal}/{returns}/h{horizon}/arith_mean
 
 - `demean` を切り替えても spread は変わりません（上位と下位から同じ平均を引くためです）。変わるのは Q1〜Q{n} の値で、`true` にすると各分位がユニバース平均をどれだけ上回ったかになります。
 - `cumulative` の spread は、日付ごとの spread を1本のリターン系列として累積したものです。複利（`cumprod`）の場合、Q{n} の累積と Q1 の累積の差とは一致しません。
-- example1 の `total`（`cumprod`）と `specific`（`cumsum`）は累積の方法が違うので、両者の累積リターンの差はファクター寄与と厳密には一致しません。
+- japan の `total`（`cumprod`）と `specific`（`cumsum`）は累積の方法が違うので、両者の累積リターンの差はファクター寄与と厳密には一致しません。
 
 **config の例**
 
@@ -357,7 +357,7 @@ summary のキー: ありません（結果は表だけです）。
 **読み方と注意点**
 
 - `mean_signal` はシグナルの生の値の平均です。ユニバース平均との差ではないので、シグナル全体の水準が 0 でない場合は、カテゴリ間の差として読みます。
-- 分類を `one_hot: true` で読み込んだ場合、列は `category` だけです。縦持ちで読み込んだ場合（example1）は、`columns` で `category` に対応付けた列が `category` になり、ソースにあった他の列も元の名前のまま残ります。その列名を `column` に指定すると、その列をカテゴリとして同じ分析ができます。
+- 分類を `one_hot: true` で読み込んだ場合、列は `category` だけです。縦持ちで読み込んだ場合（japan）は、`columns` で `category` に対応付けた列が `category` になり、ソースにあった他の列も元の名前のまま残ります。その列名を `column` に指定すると、その列をカテゴリとして同じ分析ができます。
 - `column` に存在しない列を書いた場合は、計算前の検証では検出されず、計算時にこの metric だけが `KeyError` で失敗します。
 
 **config の例**
@@ -491,7 +491,7 @@ summary のキー: `{signal}/{returns}/h{horizon}/mean_ic` と `.../spread_per_p
 
 **読み方と注意点**
 
-- ホライズン間で spread を比べるときは `spread_per_period` を使います。`mean_spread` は h 期間分のリターンなので、h が大きいほど大きくなるのが普通です。下は、example1 を同梱の `config.yaml` のまま実行したときの `ai` × `total` の結果です（同梱の config は `alpha_decay` に `params` を書いていないので、`n_quantiles` は既定の 5 です）。`mean_spread` は増えていますが、1期間あたりでは減っています。
+- ホライズン間で spread を比べるときは `spread_per_period` を使います。`mean_spread` は h 期間分のリターンなので、h が大きいほど大きくなるのが普通です。下は、japan を同梱の `config.yaml` のまま実行したときの `ai` × `total` の結果です（同梱の config は `alpha_decay` に `params` を書いていないので、`n_quantiles` は既定の 5 です）。`mean_spread` は増えていますが、1期間あたりでは減っています。
 
   | horizon | mean_ic | mean_spread | spread_per_period |
   |---|---|---|---|
@@ -542,7 +542,7 @@ summary のキー: `{signal}/lag{lag}/acf`。
 
 **読み方と注意点**
 
-- ラグの単位はカレンダーの行数です。example1 では 1 行が 1 か月なので、`lag = 12` は 12 か月前との比較です。
+- ラグの単位はカレンダーの行数です。japan では 1 行が 1 か月なので、`lag = 12` は 12 か月前との比較です。
 - 評価期間の最初の k 行は、比べる相手の行がないので欠損です（`n` は 0）。評価期間より前のシグナルは使いません。ラグが評価期間の行数以上の場合、そのラグの ACF と PACF は欠損になります。
 - PACF は「ラグ 1 〜 k − 1 の影響を除いたラグ k の相関」です。時系列平均した ACF から求めた値で、銘柄ごとの時系列の PACF ではありません。そのため `lags` にないラグの ACF も内部で計算しています。途中のラグの ACF が欠損の場合、そのラグ以降の PACF は欠損になります。
 
@@ -604,14 +604,14 @@ summary のキー: シグナル同士の組について `{a}/{b}/mean_corr`。�
 
 **config の例**
 
-シグナル同士の相関だけを見る場合（example1 でそのまま動きます）:
+シグナル同士の相関だけを見る場合（japan でそのまま動きます）:
 
 ```yaml
   - name: factor_correlation
     params: {method: pearson, include_exposures: false}
 ```
 
-リスクモデルのスタイルファクターとの相関も見る場合。config の `risk_models` に、エクスポージャーを持つモデルを定義しておく必要があります（書き方は [03 の 7 章](03_config.md#7-risk_models)）。次の `jpe4` は、config の `risk_models` に定義したモデルの名前の例です。リスクモデルを定義していない config（example1 の `config.yaml` など）に書くと、`unknown risk_model 'jpe4'` のエラーになります。
+リスクモデルのスタイルファクターとの相関も見る場合。config の `risk_models` に、エクスポージャーを持つモデルを定義しておく必要があります（書き方は [03 の 7 章](03_config.md#7-risk_models)）。次の `jpe4` は、config の `risk_models` に定義したモデルの名前の例です。リスクモデルを定義していない config（japan の `config.yaml` など）に書くと、`unknown risk_model 'jpe4'` のエラーになります。
 
 ```yaml
   - name: factor_correlation

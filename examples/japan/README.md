@@ -1,12 +1,12 @@
-# example1
+# japan
 
 社内の入力データ（`input.zip`）と同じ形式の合成データで評価を試す。値はすべて乱数。
 ディレクトリ名はわかりやすく変えている（括弧内は input.zip での名前）。
 
 ```sh
-uv run python examples/example1/make_sample_data.py          # examples/example1/input にサンプルデータを作る
-uv run alpha-eval validate examples/example1/config.yaml
-uv run alpha-eval run examples/example1/config.yaml  # examples/example1/output に結果を書き出す
+uv run python examples/japan/make_sample_data.py          # examples/japan/input にサンプルデータを作る
+uv run alpha-eval validate examples/japan/config.yaml
+uv run alpha-eval run examples/japan/config.yaml  # examples/japan/output に結果を書き出す
 ```
 
 `input/` は Git で管理していない（`.gitignore` 対象）ので、最初に `make_sample_data.py` で作る

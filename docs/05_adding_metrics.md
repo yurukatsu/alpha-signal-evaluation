@@ -98,7 +98,7 @@ metric はデータの結合と集計だけを行います。データの読み�
 
 例として「シグナル上位の銘柄の超過リターン」を追加します。日付ごとに、シグナル上位 `top_pct` % の銘柄のフォワードリターンの等ウェイト平均から、全銘柄の平均を引いたものです。
 
-この metric はこのマニュアルのための例で、リポジトリには含まれていません。試す場合は、次の内容を `src/alpha_signal_evaluation/metrics/top_pct_excess.py` として保存します。試し終えたら、このファイルを削除し、後で `examples/example1/config.yaml` に追加する行も消してください（`git checkout examples/example1/config.yaml` で元に戻せます。ファイルを置いたままにすると `top_pct_excess` が登録されたままになります）。
+この metric はこのマニュアルのための例で、リポジトリには含まれていません。試す場合は、次の内容を `src/alpha_signal_evaluation/metrics/top_pct_excess.py` として保存します。試し終えたら、このファイルを削除し、後で `examples/japan/config.yaml` に追加する行も消してください（`git checkout examples/japan/config.yaml` で元に戻せます。ファイルを置いたままにすると `top_pct_excess` が登録されたままになります）。
 
 ### ファイルの全文
 
@@ -240,7 +240,7 @@ top_pct_excess  Excess forward return of the top X% assets by signal over the un
 
 ### config に書いて実行する
 
-`examples/example1/config.yaml` の `metrics` の末尾に次を追加します（`examples/example1/input` がない場合は、先に `uv run python examples/example1/make_sample_data.py` でサンプルデータを作ります）。同じ metric を設定を変えて複数回使う場合は、2つ目以降に一意な `id` を付けます（[03_config.md の 8 章](03_config.md#8-metrics)）。
+`examples/japan/config.yaml` の `metrics` の末尾に次を追加します（`examples/japan/input` がない場合は、先に `uv run python examples/japan/make_sample_data.py` でサンプルデータを作ります）。同じ metric を設定を変えて複数回使う場合は、2つ目以降に一意な `id` を付けます（[03_config.md の 8 章](03_config.md#8-metrics)）。
 
 ```yaml
   - name: top_pct_excess
@@ -251,11 +251,11 @@ top_pct_excess  Excess forward return of the top X% assets by signal over the un
 ```
 
 ```sh
-uv run alpha-eval validate examples/example1/config.yaml
-uv run alpha-eval run examples/example1/config.yaml
+uv run alpha-eval validate examples/japan/config.yaml
+uv run alpha-eval run examples/japan/config.yaml
 ```
 
-実行すると、組み込みの metric と並んで結果が出ます（example1 のデータは乱数から作った合成データです。シードが固定なので、`make_sample_data.py` で作り直しても下と同じ値になります）。次は `alpha-eval run` の表示のうち実行状況の表で、ログと警告の行は省いています。`elapsed_sec`（実行時間）は実行のたびに変わります。
+実行すると、組み込みの metric と並んで結果が出ます（japan のデータは乱数から作った合成データです。シードが固定なので、`make_sample_data.py` で作り直しても下と同じ値になります）。次は `alpha-eval run` の表示のうち実行状況の表で、ログと警告の行は省いています。`elapsed_sec`（実行時間）は実行のたびに変わります。
 
 ```text
                metric               name status  elapsed_sec
@@ -270,7 +270,7 @@ quantile_q10_specific           quantile     ok        0.035
     top_pct_excess_30     top_pct_excess     ok        0.023
 ```
 
-出力先（`examples/example1/output`）には次のファイルができます。
+出力先（`examples/japan/output`）には次のファイルができます。
 
 | ファイル | 元になったもの |
 |---|---|
@@ -278,7 +278,7 @@ quantile_q10_specific           quantile     ok        0.035
 | `top_pct_excess_30/...` | `id: top_pct_excess_30` の分 |
 | `summary.csv` | 全 metric の `summary`（列は `metric`, `stat`, `value`） |
 | `run_info.json` | 実行の状態、metric ごとの成否、`notes`（各キーの意味は [02_features.md の 6.3](02_features.md#63-run_infojson)） |
-| `by_date/<日付>/top_pct_excess/timeseries.csv` | `date` 列を持つ表の、その日付の行（example1 は `output.by_date: all`） |
+| `by_date/<日付>/top_pct_excess/timeseries.csv` | `date` 列を持つ表の、その日付の行（japan は `output.by_date: all`） |
 
 `top_pct_excess/summary.csv`:
 
@@ -411,7 +411,7 @@ def check(cls, params, spec):
 
 ## 5. DataBundle の使い方
 
-`compute` が受け取る `DataBundle`（`data/bundle.py`）の属性とメソッドの一覧です。日付キー（各行の日付を表す値）はすべて文字列（`yyyymmdd` または `yyyymm`）で、config の `calendar.index` に指定した列（example1 では `Base_day`）の値です。`asset_id` も文字列です。カレンダーは1行が1評価期間で、ホライズンの単位はカレンダーの行数です。
+`compute` が受け取る `DataBundle`（`data/bundle.py`）の属性とメソッドの一覧です。日付キー（各行の日付を表す値）はすべて文字列（`yyyymmdd` または `yyyymm`）で、config の `calendar.index` に指定した列（japan では `Base_day`）の値です。`asset_id` も文字列です。カレンダーは1行が1評価期間で、ホライズンの単位はカレンダーの行数です。
 
 `DataBundle` と、その中の DataFrame は複数の metric が共有します。読むだけにして、書き換えないでください（[8 章](#8-やってはいけないこと)）。
 

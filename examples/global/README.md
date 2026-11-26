@@ -1,11 +1,11 @@
-# example2
+# global
 
 月次データ（ファイル名が `YYYYMM`）・BARRA 形式の ID（`INDAAA1` 等）での評価例。値はすべて乱数の合成データ。
 
 ```sh
-uv run python examples/example2/make_sample_data.py          # examples/example2/input に合成データを作る
-uv run alpha-eval validate examples/example2/config.yaml
-uv run alpha-eval run examples/example2/config.yaml  # examples/example2/output に結果を書き出す
+uv run python examples/global/make_sample_data.py          # examples/global/input に合成データを作る
+uv run alpha-eval validate examples/global/config.yaml
+uv run alpha-eval run examples/global/config.yaml  # examples/global/output に結果を書き出す
 ```
 
 `input/` は Git で管理していない（`.gitignore` 対象）ので、最初に `make_sample_data.py` で作る
@@ -25,8 +25,8 @@ uv run alpha-eval run examples/example2/config.yaml  # examples/example2/output 
 実データには触れずに合成リターンだけを作る（`calendar.dat` がない場合のみ月だけのカレンダーを作る）。
 
 ```sh
-uv run python examples/example2/make_sample_data.py --keep-data
-uv run alpha-eval run examples/example2/config.yaml
+uv run python examples/global/make_sample_data.py --keep-data
+uv run alpha-eval run examples/global/config.yaml
 ```
 
 このときのリターンはシグナルと無関係な乱数なので、IC 等は 0 付近になる（パイプラインの動作確認用）。

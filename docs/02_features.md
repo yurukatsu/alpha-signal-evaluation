@@ -31,20 +31,20 @@ alpha-signal-evaluation は、株式のアルファシグナル（銘柄ごと�
 metric は `DataBundle` だけを受け取り、時点をずらす処理を一切しません。
 フォワードリターンは「シグナルの時点から先のリターン」、ホライズンは「何期間先までのリターンを見るか」です（定義は [4 章](#4-時点合わせの仕様)）。
 
-## 2. 5分で動かす（example1）
+## 2. 5分で動かす（japan）
 
-`examples/example1` は、合成データ（値はすべて乱数）で一通りの評価を試すサンプルです。
+`examples/japan` は、合成データ（値はすべて乱数）で一通りの評価を試すサンプルです。
 
 前提は、Python 3.12 以上と uv（Python のパッケージ管理ツール）が入っていて、リポジトリを取得済みであることです。コマンドはすべてリポジトリのルートで実行します。
 
 ```sh
 uv sync                                                        # 初回のみ
-uv run python examples/example1/make_sample_data.py           # examples/example1/input がない場合だけ実行する
-uv run alpha-eval validate examples/example1/config.yaml
-uv run alpha-eval run examples/example1/config.yaml
+uv run python examples/japan/make_sample_data.py           # examples/japan/input がない場合だけ実行する
+uv run alpha-eval validate examples/japan/config.yaml
+uv run alpha-eval run examples/japan/config.yaml
 ```
 
-`validate` は計算せずに設定を確認します。example1 では警告が1件出ますが、エラーではありません（[4.9](#49-期間の末尾でリターンが足りない場合) を参照）。
+`validate` は計算せずに設定を確認します。japan では警告が1件出ますが、エラーではありません（[4.9](#49-期間の末尾でリターンが足りない場合) を参照）。
 
 ```text
 warning: Calendar ends 6 row(s) short of the longest horizon; forward returns at the end of the period are missing
@@ -62,10 +62,10 @@ quantile_q10_specific           quantile     ok        0.038
           alpha_decay        alpha_decay     ok        0.528
              autocorr           autocorr     ok        0.267
    factor_correlation factor_correlation     ok        0.038
-Results: .../examples/example1/output
+Results: .../examples/japan/output
 ```
 
-出力先（config の `output.dir`。ここでは `examples/example1/output`）には次のファイルができます。各ファイルの内容は [6 章](#6-出力) で説明します。
+出力先（config の `output.dir`。ここでは `examples/japan/output`）には次のファイルができます。各ファイルの内容は [6 章](#6-出力) で説明します。
 
 ```text
 output/
@@ -97,7 +97,7 @@ output/
 
 どのデータも、config に「ソース」（ファイルや DB などの読み込み元。[3.2](#32-ソースの種類)）として書きます。
 ソースの実際の列名は、`columns` で role（`asset_id`・`date`・`weight` など、列の役割を表す決まった名前）に対応づけます。
-たとえば example1 のファイルでは銘柄コードの列名が `nri_code`（社内の銘柄コード）なので、`columns: {asset_id: nri_code}` と書きます。
+たとえば japan のファイルでは銘柄コードの列名が `nri_code`（社内の銘柄コード）なので、`columns: {asset_id: nri_code}` と書きます。
 自分のデータでは、実際の列名を書いてください（role の一覧は [03 の「columns: role と実カラム名の対応」](03_config.md#columns-role-と実カラム名の対応)）。
 
 | データ | config のキー | 何に使うか | 必須か | 対応するソース |
@@ -141,7 +141,7 @@ DB を使うには、DB の種類ごとのドライバーの追加インスト�
 ### 3.3 カレンダーファイル
 
 カレンダーは空白区切りのテキストファイルで、1行が1評価期間です。`calendar.index` で指定した列（既定は `Base_day`）の値が、すべてのデータに付く日付キーになります。
-ファイルの形式（ヘッダー、区切り、列の値の決まり）と example1 のカレンダーの中身は [03 の「calendar」](03_config.md#calendar) を、カレンダーの行とデータの対応は [4.1](#41-カレンダー1行--1評価期間) と [4.2](#42-どのデータがどの行に対応するか) を参照してください。
+ファイルの形式（ヘッダー、区切り、列の値の決まり）と japan のカレンダーの中身は [03 の「calendar」](03_config.md#calendar) を、カレンダーの行とデータの対応は [4.1](#41-カレンダー1行--1評価期間) と [4.2](#42-どのデータがどの行に対応するか) を参照してください。
 
 ## 4. 時点合わせの仕様
 
@@ -166,7 +166,7 @@ DB を使うには、DB の種類ごとのドライバーの追加インスト�
 ### 4.2 どのデータがどの行に対応するか
 
 どの列でファイルを選んでも、読み込んだデータには `calendar.index` の値が日付キーとして付きます。
-example1 のカレンダーの4行を例にします。
+japan のカレンダーの4行を例にします。
 
 | Base_day | Trading_day | Rskmdl_month | Label2 |
 |---|---|---|---|
@@ -175,7 +175,7 @@ example1 のカレンダーの4行を例にします。
 | 20240731 | 20240731 | 202406 | 20240730 |
 | 20240830 | 20240830 | 202407 | 20240829 |
 
-example1 の config では、行 `20240531` に次のファイルが対応します。いずれのデータも日付キーは `20240531` になります。
+japan の config では、行 `20240531` に次のファイルが対応します。いずれのデータも日付キーは `20240531` になります。
 
 | データ | config のパス | 実際に読むファイル |
 |---|---|---|
@@ -218,7 +218,7 @@ h 行分の期間リターンを束ねる方法は、リターン系列ごとに
 
 `source: barra` は例外で、`aggregation` を選べません。`series` に `{系列名: total または specific}` と書き、この値で読むデータと束ね方が決まります。`total` は DRTN を `cumprod` で、`specific` は SRTN を `cumsum` で束ねます。
 
-example1（convention は `realized`）の銘柄 `01346` を例にします。config では、系列 `total` は列 `ret` で `aggregation: cumprod`、系列 `specific` は列 `sret` で `aggregation: cumsum` です。`input/returns/` の各ファイルの値は次のとおりです。
+japan（convention は `realized`）の銘柄 `01346` を例にします。config では、系列 `total` は列 `ret` で `aggregation: cumprod`、系列 `specific` は列 `sret` で `aggregation: cumsum` です。`input/returns/` の各ファイルの値は次のとおりです。
 
 | ファイル（行） | `ret`（`total`） | `sret`（`specific`） |
 |---|---|---|
@@ -239,7 +239,7 @@ example1（convention は `realized`）の銘柄 `01346` を例にします。co
 
 `source: db` と `source: barra` のリターンは日次で取得し、カレンダーの期間に集約します。ファイルのリターンは、すでに期間リターンになっているものとして集約しません。
 
-- 期間の境界は `match_on` で指定したカレンダーの列です。example1 のカレンダーで `match_on: Trading_day`、`realized` とした場合、行 `20240628` の期間は「`20240531` の翌日から `20240628` まで」（`20240531 < 日付 <= 20240628`）です。
+- 期間の境界は `match_on` で指定したカレンダーの列です。japan のカレンダーで `match_on: Trading_day`、`realized` とした場合、行 `20240628` の期間は「`20240531` の翌日から `20240628` まで」（`20240531 < 日付 <= 20240628`）です。
 - `forward` の場合、行 `20240531` の期間は `20240531 <= 日付 < 20240628` です。
 - `match_on` が月（6桁）の列なら、境界はその月の月末日になります。`realized` で連続した月が並ぶカレンダーでは、その月の1日から月末日までが1期間です。
   `forward` では、行の月の月末日から、次の行の月の月末日の前日までが1期間です（たとえば `202405` の行は `20240531 <= 日付 < 20240630`）。
@@ -277,7 +277,7 @@ example1（convention は `realized`）の銘柄 `01346` を例にします。co
 フォワードリターンには、評価行の後ろに最大ホライズン分の行が必要です。そのためリターンは、評価期間の前に1行、後ろに最大ホライズン行だけ広げて読みます。
 
 - カレンダーが後ろに足りない場合、足りない分のフォワードリターンは欠損になり、次の警告が出ます。
-  example1 は `period.end` がカレンダーの最終行で `horizons: [1, 3, 6]` なので、6行不足しています。
+  japan は `period.end` がカレンダーの最終行で `horizons: [1, 3, 6]` なので、6行不足しています。
 
   ```text
   Calendar ends 6 row(s) short of the longest horizon; forward returns at the end of the period are missing
@@ -354,7 +354,7 @@ ic,ai/total/h3/mean_ic,0.11201454313829742
 出力形式によらず常に書かれ、実行中も metric が終わるたびに更新されます（書かれる順序は [6.5](#65-逐次書き出し途中で落ちたときに残るもの)）。
 出力を使う前に、まず `state` と `status` を確認してください。`state` が `finished` なら、`status` に `ok` と載っている metric の出力は、すべて今回の実行で書かれたものです。
 
-example1 の実行結果を、一部を省略し行を詰めて示します。
+japan の実行結果を、一部を省略し行を詰めて示します。
 
 ```json
 {
@@ -406,7 +406,7 @@ example1 の実行結果を、一部を省略し行を詰めて示します。
 - 切り出した表には `date` 列がありません。日付を持たない表（期間全体の要約など）は含まれません。
 - `xlsx` を指定している場合は `by_date/<日付>/report.xlsx` も書きます。
 
-example1 の `by_date/20240531/` には次のファイルができます（`alpha_decay` と `factor_correlation` は日付を持つ表がないので含まれません）。
+japan の `by_date/20240531/` には次のファイルができます（`alpha_decay` と `factor_correlation` は日付を持つ表がないので含まれません）。
 
 ```text
 by_date/20240531/
@@ -447,7 +447,7 @@ by_date/20240531/
 | プロセスが強制終了された（メモリ不足など） | 最後に終わった metric までの csv / parquet・`summary`。xlsx は残らない | `running` のまま |
 | config の検証でエラーになった | 何も書かない（出力先も作らない） | ― |
 
-example1 を `--n-jobs 1` で実行し、4つ目の metric（`category_ic`）の計算中に Ctrl-C で止めた場合、`run_info.json` は次のようになります（該当部分）。
+japan を `--n-jobs 1` で実行し、4つ目の metric（`category_ic`）の計算中に Ctrl-C で止めた場合、`run_info.json` は次のようになります（該当部分）。
 終わっていた3つ（`ic`、`quantile`、`quantile_q10_specific`）は `status` に載り、表も出力されています。
 
 ```json
@@ -540,8 +540,8 @@ metric を自作するための `Metric`・`MetricParams`・`MetricResult`・`Re
 ```python
 from alpha_signal_evaluation import evaluate
 
-# example1 の config は n_jobs: 4。ここでは 1 を指定して順に実行する（並列にする場合は下の注意を参照）
-report = evaluate("examples/example1/config.yaml", n_jobs=1)
+# japan の config は n_jobs: 4。ここでは 1 を指定して順に実行する（並列にする場合は下の注意を参照）
+report = evaluate("examples/japan/config.yaml", n_jobs=1)
 
 report["ic"].tables["summary"]    # metric のキーで結果を取り出す（tables は 表の名前 -> DataFrame）
 report["ic"].notes                # metric の注記
@@ -561,13 +561,13 @@ report.save()                     # config の output 設定で書き出す（�
 - Python API は `.env` を読み込みません。DB を使う場合は、環境変数を設定してから呼び出してください。
 
 手元の DataFrame で評価する場合は、`make_bundle()` で `DataBundle` を作って `data=` に渡します。ファイルや DB の読み込みを通らず、config には metric だけを書けば足ります。
-次の例は example1 のファイルを pandas で読み、2行分を評価します。
+次の例は japan のファイルを pandas で読み、2行分を評価します。
 
 ```python
 import pandas as pd
 from alpha_signal_evaluation import evaluate, make_bundle
 
-root = "examples/example1/input"
+root = "examples/japan/input"
 
 # シグナル: index=(date, asset_id)、columns=シグナル名。date は Base_day、ファイル名は Label2
 files = {"20240531": "20240530", "20240628": "20240627"}
@@ -618,14 +618,14 @@ metric を複数のプロセスで並列に実行できます。config の `exec
 - ファイルに保存せず notebook などで定義した自作の metric は、並列実行で失敗することがあるので `n_jobs=1` で実行してください（[05 の「ファイルに置く前に Python で試す」](05_adding_metrics.md#ファイルに置く前に-python-で試す)）。
 
 Python のスクリプトから `n_jobs` を 2 以上にして `evaluate()` を呼ぶ場合は、呼び出しを `if __name__ == "__main__":` の中に書いてください。
-macOS では、これがないと子プロセスの起動に失敗して処理が終わりません（example1 の config は `n_jobs: 4` です）。
+macOS では、これがないと子プロセスの起動に失敗して処理が終わりません（japan の config は `n_jobs: 4` です）。
 子プロセスがスクリプトを先頭から読み込み直す起動方式（spawn）のためで、Windows も同じ方式です。CLI ではこの注意は不要です。
 
 ```python
 from alpha_signal_evaluation import evaluate
 
 if __name__ == "__main__":
-    report = evaluate("examples/example1/config.yaml")   # config の execution.n_jobs（4）で並列に実行
+    report = evaluate("examples/japan/config.yaml")   # config の execution.n_jobs（4）で並列に実行
 ```
 
 ### 7.4 DB キャッシュ

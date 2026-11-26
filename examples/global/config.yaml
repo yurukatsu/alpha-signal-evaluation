@@ -1,4 +1,4 @@
-# サンプル設定。examples/example2/make_sample_data.py で作ったデータ（月次・BARRA 形式の ID）を評価する。
+# サンプル設定。examples/global/make_sample_data.py で作ったデータ（月次・BARRA 形式の ID）を評価する。
 # 相対パスはこのファイルの場所を基準に解決される。
 version: 1
 

@@ -10,8 +10,8 @@ config.yaml に書けるすべての項目について、「何を指定する�
   metric ごとのパラメータは [04 の 3 章](04_metrics.md#3-metric-ごとの仕様) にあります。
 - シグナル、カレンダー、ホライズン、フォワードリターン、DataBundle などの用語は [01 の「この文書で使う用語」](01_design.md#この文書で使う用語) にまとめています。
   この文書では、カレンダーの `calendar.index` の列の値（`20240531` のような8桁の日付、または `202405` のような6桁の月）を「日付キー」と呼びます。
-- 例には、リポジトリに同梱の2つのサンプルを使います。example1（`examples/example1`）は日付キーが8桁の日付の月次データ、
-  example2（`examples/example2`）は日付キーが6桁の月の月次データで、どちらも値が乱数の合成データです（[12 章](#12-付録-すべての項目を載せた例)）。
+- 例には、リポジトリに同梱の2つのサンプルを使います。japan（`examples/japan`）は日付キーが8桁の日付の月次データ、
+  global（`examples/global`）は日付キーが6桁の月の月次データで、どちらも値が乱数の合成データです（[12 章](#12-付録-すべての項目を載せた例)）。
   コマンドは、リポジトリのルートで実行する前提で書いています。
 
 この文書の表の「既定値」は、キーを省略したときに使われる値です。「必須」と書いたキーは省略できません。
@@ -42,8 +42,8 @@ config.yaml に書けるすべての項目について、「何を指定する�
 
 ### 動く最小構成
 
-次の内容を `examples/example1/` の下に保存すると（ファイル名は任意。以下では `config.min.yaml` とします）、そのまま検証と実行を通ります。
-`examples/example1/input` がなければ、`uv run python examples/example1/make_sample_data.py` で作ります。
+次の内容を `examples/japan/` の下に保存すると（ファイル名は任意。以下では `config.min.yaml` とします）、そのまま検証と実行を通ります。
+`examples/japan/input` がなければ、`uv run python examples/japan/make_sample_data.py` で作ります。
 
 ```yaml
 version: 1
@@ -70,18 +70,18 @@ metrics:
 ```
 
 ```sh
-uv run alpha-eval validate examples/example1/config.min.yaml   # 計算せずに設定を検証する
-uv run alpha-eval run examples/example1/config.min.yaml        # 評価して結果を書き出す
+uv run alpha-eval validate examples/japan/config.min.yaml   # 計算せずに設定を検証する
+uv run alpha-eval run examples/japan/config.min.yaml        # 評価して結果を書き出す
 ```
 
 省略した項目は既定値になります。この例では、カレンダーの全行を評価期間とし、ホライズンは 1、結果は config と同じ場所の `out/` に csv で書き出します。
 カレンダーの最終行まで評価するので、`Calendar ends 1 row(s) short of the longest horizon; ...` という警告が1件出ます。
 最終行のフォワードリターンを作れないという意味で、エラーではありません。
 
-`nri_code` は社内の銘柄コードで、example1 のファイルでは銘柄コードの列名にもなっています。config で必須の名前ではありません。
+`nri_code` は社内の銘柄コードで、japan のファイルでは銘柄コードの列名にもなっています。config で必須の名前ではありません。
 自分のデータで銘柄コードの列が `code` なら、`columns: {asset_id: code}` と書きます（[columns: role と実カラム名の対応](#columns-role-と実カラム名の対応)）。
 
-config が指しているファイルの中身を、example1 の同梱の config（`examples/example1/config.yaml`）が使うものも含めて示します。
+config が指しているファイルの中身を、japan の同梱の config（`examples/japan/config.yaml`）が使うものも含めて示します。
 各ファイルの先頭2行です（ユニバースは先頭2行がコメントなので3行）。カレンダーの `Base_day` が `20240531` の行は、
 `Trading_day` が `20240531`、`Label2` が `20240530` です。この行には、下の `20240530.csv` や `20240531.csv` が対応します。
 
@@ -140,7 +140,7 @@ nri_code,ret,sret
 
 1. **カレンダーを用意する。** 1行が1評価期間（リバランスの時点ごとに1行）のテキストファイルを作ります。
    列には、結果の日付として使う列のほかに、データのファイル名に入っている日付や月を、種類ごとに1列ずつ持たせます。
-   example1 では、シグナルのファイル名が前営業日の日付なので、その日付の列 `Label2` があります。書式は [calendar](#calendar) を参照してください。
+   japan では、シグナルのファイル名が前営業日の日付なので、その日付の列 `Label2` があります。書式は [calendar](#calendar) を参照してください。
 2. **`calendar.index` と、各ファイルを選ぶ列を決める。** `calendar.index` には、結果の `date` 列に出したい列を指定します（`period` と `output.by_date` も、この列の値で書きます）。
    次にデータごとに、ファイル名に入っている値がカレンダーのどの列の値かを確かめ、`path` のその位置に `{列名}` と書きます。
    全期間が1つのファイルにまとまっているデータは、`path` をそのまま書き、ファイルの日付の列を `columns` の `date` に、それと突き合わせるカレンダーの列を `match_on` に指定します。
@@ -200,7 +200,7 @@ config は次の2段階で検証され、どちらも計算を始める前に行
 
 ## 2. 時間軸: version / calendar / period / horizons
 
-評価の時間軸を決める4つのセクションです。example1 では次のように書いています。
+評価の時間軸を決める4つのセクションです。japan では次のように書いています。
 
 ```yaml
 version: 1
@@ -225,7 +225,7 @@ horizons: [1, 3, 6]
 | `index` | 文字列 | `Base_day` | 内部ですべてのデータに付ける日付キーの列名。結果の `date` 列はこの列の値になります |
 | `columns` | 文字列のリスト | なし（ファイルのヘッダーを使う） | ヘッダー行のないファイルの列名。指定するとファイルのヘッダーより優先されます |
 
-example1 のカレンダーは次の形です。列は自由に増やせ、ファイルのパスのプレースホルダや `match_on` から列名で参照します。
+japan のカレンダーは次の形です。列は自由に増やせ、ファイルのパスのプレースホルダや `match_on` から列名で参照します。
 
 ```text
 #Base_day	Monthend_day	Trading_day	Rskmdl_month	Label1	Label2
@@ -280,7 +280,7 @@ example1 のカレンダーは次の形です。列は自由に増やせ、フ�
 
 **日付ごとのファイル（プレースホルダあり）**: `{Label2}` のように、カレンダーの列名を波括弧で囲んで書きます。
 カレンダーの行ごとに、その行の値を埋め込んだファイルを読みます。どの列でファイルを選んでも、データに付く日付キーは `calendar.index` の値です。
-example1 では、`Base_day` が `20240131` の行は `Label2` が `20240130` なので、`./input/alpha/ai/20240130.csv` が `20240131` のデータとして読まれます。
+japan では、`Base_day` が `20240131` の行は `Label2` が `20240130` なので、`./input/alpha/ai/20240130.csv` が `20240131` のデータとして読まれます。
 複数の行が同じファイルを指しても構いません（1回だけ読みます）。この読み方では `match_on` を使いません。
 ファイルの中に日付の列があっても、行の対応付けには使いません（`columns` で `date` に対応付けた列は読み捨てます）。
 
@@ -427,7 +427,7 @@ data:
 |---|---|---|---|
 | `one_hot` | 真偽値 | `false` | `false` なら縦持ち（`columns` の `category` に対応づけた列の値をカテゴリにする）。`true` なら one-hot（`asset_id` 以外のすべての列を 0/1 の列とみなし、1 が立っている列名をカテゴリにする） |
 
-縦持ち（example1）:
+縦持ち（japan）:
 
 ```yaml
 data:
@@ -651,7 +651,7 @@ risk_models:
   日付ごとに正方行列になっていなければエラーになります。値は換算しないので、年率の小数の2乗で用意します。
 - `factor_returns` を `db` で読む場合は `match_on` が必須で、日次の値を期間に加算で集約します。
 - `specific_return` を書かないと、実行時に `risk_models.<モデル名>.specific_return is not set` という警告が出ます。
-- example1 と example2 には、リスクモデルのファイルは含まれていません。上の例のパスは `examples/config.full.example.yaml` のものです。
+- japan と global には、リスクモデルのファイルは含まれていません。上の例のパスは `examples/config.full.example.yaml` のものです。
 
 ### source: barra のリスクモデル
 
@@ -917,7 +917,7 @@ YAML として読めないファイルと、トップレベルがマッピング
 | 対応していない拡張子 | `universe.path: unsupported file type; supported: ['.csv', '.dat', '.parquet', '.pkl', '.tsv']` |
 | 接続先名が違う | `returns[0].connection: unknown connection 'risk_model'; available: ['ai_model', ...]` |
 | SQL ファイルがない | `returns[0].query: file not found: ...` |
-| DB・Barra の `match_on` が日付や月の列でない | `returns[0].match_on: DB sources must match on a date (yyyymmdd) or month (yyyymm) column; 'Label2' is not`（example2 のカレンダーの場合。`Label2` の値が `87c` のような文字列です） |
+| DB・Barra の `match_on` が日付や月の列でない | `returns[0].match_on: DB sources must match on a date (yyyymmdd) or month (yyyymm) column; 'Label2' is not`（global のカレンダーの場合。`Label2` の値が `87c` のような文字列です） |
 | リターン・ファクターリターンの DB・Barra の `match_on` の列に重複がある | `returns[0].match_on: Calendar column '<列名>' has duplicated values: [...]` |
 | DB の環境変数が未設定 | `connection 'risk_models' (RiskModelsConfig): host, username, password not set; set the environment variables (see .env.example)` |
 | metric 名が違う | `metrics[icc]: Unknown metric 'icc'. Available: ['alpha_decay', ...]` |
@@ -1002,5 +1002,5 @@ Barra から読む書き方は、[examples/config.full.example.yaml](../examples
 
 | ファイル | 内容 |
 |---|---|
-| [examples/example1/config.yaml](../examples/example1/config.yaml) | 日付キーが8桁の日付（`Base_day`）、縦持ちの業種分類、銘柄だけのユニバースと別ファイルのベンチマーク |
-| [examples/example2/config.yaml](../examples/example2/config.yaml) | 日付キーが6桁の月（`Base_month`）、シグナルソースが1つ、ベンチマークを別ファイルで指定する例 |
+| [examples/japan/config.yaml](../examples/japan/config.yaml) | 日付キーが8桁の日付（`Base_day`）、縦持ちの業種分類、銘柄だけのユニバースと別ファイルのベンチマーク |
+| [examples/global/config.yaml](../examples/global/config.yaml) | 日付キーが6桁の月（`Base_month`）、シグナルソースが1つ、ベンチマークを別ファイルで指定する例 |

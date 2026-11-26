@@ -14,7 +14,7 @@ from alpha_signal_evaluation.data.calendar import load_calendar
 from alpha_signal_evaluation.io.file import read_table
 from alpha_signal_evaluation.pipeline import build_bundle
 
-EXAMPLES = Path(__file__).parents[1] / "examples" / "example1"
+EXAMPLES = Path(__file__).parents[1] / "examples" / "japan"
 
 
 def test_calendar_with_mixed_whitespace(tmp_path):
@@ -145,15 +145,15 @@ def _run_generator(script: Path, root: Path, *args: str) -> None:
 
 @pytest.fixture(scope="module")
 def sample2(tmp_path_factory):
-    """examples/example2: 月次（YYYYMM）・スペース区切り・ベンチマーク別ファイルの形式。"""
-    example = EXAMPLES.parent / "example2"
+    """examples/global: 月次（YYYYMM）・スペース区切り・ベンチマーク別ファイルの形式。"""
+    example = EXAMPLES.parent / "global"
     root = tmp_path_factory.mktemp("sample2")
     _run_generator(example / "make_sample_data.py", root / "input")
     shutil.copy(example / "config.yaml", root / "config.yaml")
     return root
 
 
-def test_example2_bundle(sample2):
+def test_global_bundle(sample2):
     result = validate(sample2 / "config.yaml")
     assert result.ok, result.errors
     bundle = build_bundle(load_config(sample2 / "config.yaml")).bundle
@@ -168,21 +168,21 @@ def test_example2_bundle(sample2):
     assert weights.to_numpy() == pytest.approx(1.0)
 
 
-def test_example2_evaluation(sample2):
+def test_global_evaluation(sample2):
     report = evaluate(sample2 / "config.yaml", n_jobs=1)
     assert report.ok, report.errors
     summary = report["ic"].tables["summary"].set_index(["returns", "horizon"])
     assert summary.loc[("specific", 1), "mean_ic"] > 0.03
 
 
-def test_example2_keeps_existing_data(sample2, tmp_path):
+def test_global_keeps_existing_data(sample2, tmp_path):
     root = tmp_path / "input"
     for d in ["alpha", "bm", "univ"]:
         shutil.copytree(sample2 / "input" / d, root / d)
     before = (root / "alpha" / "202607.dat").read_text()
     calendar = "#Month\n200301\n200302\n"  # 本番の calendar.dat は上書きしない
     (root / "calendar.dat").write_text(calendar)
-    script = EXAMPLES.parent / "example2" / "make_sample_data.py"
+    script = EXAMPLES.parent / "global" / "make_sample_data.py"
     with pytest.raises(SystemExit, match="already has data"):
         _run_generator(script, root)
     _run_generator(script, root, "--keep-data")

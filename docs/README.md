@@ -19,7 +19,7 @@ alpha-signal-evaluation は、株式のアルファシグナル（銘柄ごと�
 
 | やりたいこと | 読む場所 |
 |---|---|
-| まず動かしてみたい | このページの「5分で動かす」、続けて [02 の 2 章](02_features.md#2-5分で動かすexample1) |
+| まず動かしてみたい | このページの「5分で動かす」、続けて [02 の 2 章](02_features.md#2-5分で動かすjapan) |
 | 自分のデータで評価したい | [03 の「自分のデータで config を書く手順」](03_config.md#自分のデータで-config-を書く手順)から始め、必要な節を引く |
 | 出力された表の列の意味を知りたい | [04 の 3 章](04_metrics.md#3-metric-ごとの仕様) |
 | シグナルとリターンの日付がどう対応しているかを確かめたい | [02 の 4 章](02_features.md#4-時点合わせの仕様)（時点合わせの仕様） |
@@ -34,12 +34,12 @@ alpha-signal-evaluation は、株式のアルファシグナル（銘柄ごと�
 
 ```sh
 uv sync                                                        # 依存パッケージを入れる
-uv run python examples/example1/make_sample_data.py            # サンプルデータを作る（input/ が既にあれば不要）
-uv run alpha-eval validate examples/example1/config.yaml   # 計算せずに設定を検証する
-uv run alpha-eval run examples/example1/config.yaml        # 評価して examples/example1/output に書き出す
+uv run python examples/japan/make_sample_data.py            # サンプルデータを作る（input/ が既にあれば不要）
+uv run alpha-eval validate examples/japan/config.yaml   # 計算せずに設定を検証する
+uv run alpha-eval run examples/japan/config.yaml        # 評価して examples/japan/output に書き出す
 ```
 
-`examples/example1/output/` に、metric ごとのディレクトリ（`ic/`、`quantile/` など）と、全体の要約 `summary.csv`、実行の記録 `run_info.json` ができます。出力の見方は [02 の 6 章](02_features.md#6-出力) を参照してください。
+`examples/japan/output/` に、metric ごとのディレクトリ（`ic/`、`quantile/` など）と、全体の要約 `summary.csv`、実行の記録 `run_info.json` ができます。出力の見方は [02 の 6 章](02_features.md#6-出力) を参照してください。
 
 ## このモジュールの考え方（要約）
 
