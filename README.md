@@ -59,8 +59,8 @@ csv / parquet は残らない（`report.xlsx` は今回 xlsx を書いたとき�
 uv run python examples/example1/make_sample_data.py && uv run alpha-eval run examples/example1/config.yaml
 ```
 
-`example` / `barra-internal-check` ブランチには生成済みの input があるので、そのまま `alpha-eval run` できる
-（`make_sample_data.py` は作り直すときだけ使う。main には input を含めていないので、最初に実行する）。
+サンプルの入力データ（`examples/*/input/`）は Git で管理していない（`.gitignore` 対象）。
+最初に `make_sample_data.py` で作る（乱数のシードは固定なので、何度作っても同じデータになる）。
 
 ### Python API
 

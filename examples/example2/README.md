@@ -8,7 +8,7 @@ uv run alpha-eval validate examples/example2/config.yaml
 uv run alpha-eval run examples/example2/config.yaml  # examples/example2/output に結果を書き出す
 ```
 
-`example` / `barra-internal-check` ブランチには生成済みの `input/` があるので、最初の `make_sample_data.py` は不要
+`input/` は Git で管理していない（`.gitignore` 対象）ので、最初に `make_sample_data.py` で作る
 （作り直すときは `input/` を消してから実行する。既存のデータがあると止まる）。
 
 | パス | 内容 | 形式 |
